@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+**/dist/
+**/.next/
+**/coverage/
+# The brief is kept verbatim as the user wrote it.
+docs/BRIEF.md

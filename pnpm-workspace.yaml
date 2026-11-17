@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Supply-chain guard: refuse versions published less than two days ago, so a
+# compromised release has time to be caught and yanked before we install it.
+minimumReleaseAge: 2880
+
+# Dependencies allowed to run install scripts (native binaries for SWC and esbuild).
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
