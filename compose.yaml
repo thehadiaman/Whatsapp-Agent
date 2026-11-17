@@ -1,0 +1,107 @@
+# Local stack.
+#   make dev   -> postgres + redis here; apps run on the host in watch mode.
+#   make up    -> everything in containers from the production images (profile "app").
+# Production (Caddy, resource limits, secrets from SSM) gets its own file in phase 9.
+
+name: support-desk
+
+x-app-env: &app-env
+  APP_MODE: ${APP_MODE:-mock}
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://postgres:postgres@postgres:5432/app
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-55432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d app']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8.8.4-alpine
+    ports:
+      - '127.0.0.1:${REDIS_HOST_PORT:-56379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args: { APP: api }
+    environment:
+      <<: *app-env
+      API_PORT: '4000'
+    ports:
+      - '127.0.0.1:4000:4000'
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args: { APP: worker }
+    environment:
+      <<: *app-env
+    depends_on:
+      redis: { condition: service_healthy }
+
+  simulator:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args: { APP: simulator }
+    environment:
+      <<: *app-env
+      SIMULATOR_PORT: '4010'
+    ports:
+      - '127.0.0.1:4010:4010'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
