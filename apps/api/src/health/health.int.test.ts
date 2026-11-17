@@ -1,33 +1,11 @@
-import { Writable } from 'node:stream';
-import { createLogger } from '@app/shared';
 import type { INestApplication } from '@nestjs/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../bootstrap.js';
-import { apiEnvSchema, type ApiConfig } from '../config.js';
-
-const quietLogger = createLogger({
-  service: 'api-test',
-  level: 'error',
-  destination: new Writable({
-    write: (_chunk, _encoding, done) => {
-      done();
-    },
-  }),
-});
-
-function testConfig(overrides: Partial<Record<keyof ApiConfig, string>> = {}): ApiConfig {
-  return apiEnvSchema.parse({
-    NODE_ENV: 'test',
-    DATABASE_URL: process.env['TEST_DATABASE_URL'],
-    REDIS_URL: process.env['TEST_REDIS_URL'],
-    ...overrides,
-  });
-}
+import { startApi, testConfig } from '../test/harness.js';
+import type { ApiConfig } from '../config.js';
 
 async function start(config: ApiConfig): Promise<{ app: INestApplication; url: string }> {
-  const app = await createApp(config, quietLogger);
-  await app.listen(0, '127.0.0.1');
-  return { app, url: await app.getUrl() };
+  const { app, url } = await startApi(config);
+  return { app, url };
 }
 
 describe('health and readiness against real Postgres and Redis', () => {

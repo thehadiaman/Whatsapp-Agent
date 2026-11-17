@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import type { Redis } from 'ioredis';
-import type pg from 'pg';
-import { PG_POOL, REDIS } from '../infra/tokens.js';
+import type { DbHandle } from '@app/db';
+import { DB, REDIS } from '../infra/tokens.js';
 import { HealthController } from './health.controller.js';
 import {
   READINESS_PROBES,
@@ -17,12 +17,12 @@ import {
     { provide: READINESS_TIMEOUT_MS, useValue: 1_000 },
     {
       provide: READINESS_PROBES,
-      inject: [PG_POOL, REDIS],
-      useFactory: (pool: pg.Pool, redis: Redis): ReadinessProbe[] => [
+      inject: [DB, REDIS],
+      useFactory: (db: DbHandle, redis: Redis): ReadinessProbe[] => [
         {
           name: 'postgres',
           check: async () => {
-            await pool.query('select 1');
+            await db.pool.query('select 1');
           },
         },
         {

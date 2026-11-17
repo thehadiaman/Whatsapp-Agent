@@ -4,7 +4,7 @@ SHELL := /bin/bash
 # Export every variable in .env to the commands below (when the file exists).
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
-.PHONY: help setup infra dev check test test-int images up down reset
+.PHONY: help setup infra db dev check test test-int images up down reset
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -18,7 +18,10 @@ setup: ## Install dependencies, enable git hooks, create .env, pull images (need
 infra: ## Start Postgres and Redis and wait until healthy
 	docker compose up -d --wait postgres redis
 
-dev: infra ## Run the product in mock mode: infra in Docker, apps on the host in watch mode
+db: infra ## Create database roles, apply migrations, seed demo data (idempotent)
+	$(LOAD_ENV) pnpm db:provision && pnpm --filter @app/api build && pnpm --filter @app/api run seed
+
+dev: db ## Run the product in mock mode: infra in Docker, apps on the host in watch mode
 	$(LOAD_ENV) pnpm dev
 
 check: ## Format check, lint, typecheck, unit tests, commit-message tests

@@ -1,7 +1,9 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Access } from '../auth/access.guard.js';
 import { ReadinessService, type ReadinessReport } from './readiness.service.js';
 
 @Controller()
+@Access('public')
 export class HealthController {
   constructor(private readonly readiness: ReadinessService) {}
 

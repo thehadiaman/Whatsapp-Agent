@@ -1,4 +1,6 @@
-/** Injection tokens for infrastructure clients and the logger. */
-export const PG_POOL = Symbol('PG_POOL');
+/** Injection tokens for infrastructure clients, the logger and auth. */
+export const DB = Symbol('DB');
+export const PLATFORM_DB = Symbol('PLATFORM_DB');
 export const REDIS = Symbol('REDIS');
 export const LOGGER = Symbol('LOGGER');
+export const AUTH = Symbol('AUTH');

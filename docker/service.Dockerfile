@@ -16,12 +16,14 @@ WORKDIR /repo
 # Manifests first, so the dependency layer is reused when only source changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
 COPY apps/${APP}/package.json apps/${APP}/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter "@app/${APP}..."
 
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
+COPY packages/db packages/db
 COPY apps/${APP} apps/${APP}
 RUN pnpm --filter "@app/${APP}..." build \
  && pnpm deploy --filter "@app/${APP}" --prod /out

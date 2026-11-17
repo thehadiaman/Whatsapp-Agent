@@ -9,7 +9,8 @@ x-app-env: &app-env
   APP_MODE: ${APP_MODE:-mock}
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  DATABASE_URL: postgres://postgres:postgres@postgres:5432/app
+  DATABASE_URL: postgres://app_user:app_user_dev@postgres:5432/app
+  DATABASE_PLATFORM_URL: postgres://app_platform:app_platform_dev@postgres:5432/app
   REDIS_URL: redis://redis:6379/0
 
 services:
@@ -40,6 +41,23 @@ services:
       timeout: 3s
       retries: 30
 
+  # One-shot: database roles, migrations and demo seed, then exits. The API waits for it.
+  provision:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+      args: { APP: api }
+    environment:
+      <<: *app-env
+      DATABASE_SUPERUSER_URL: postgres://postgres:postgres@postgres:5432/app
+      DATABASE_MIGRATOR_URL: postgres://app_migrator:app_migrator_dev@postgres:5432/app
+      SEED_PASSWORD: ${SEED_PASSWORD:-counter-demo-2026}
+    command:
+      ['sh', '-c', 'node node_modules/@app/db/dist/cli/provision.js && node dist/cli/seed.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+
   api:
     profiles: [app]
     build:
@@ -49,10 +67,12 @@ services:
     environment:
       <<: *app-env
       API_PORT: '4000'
+      PUBLIC_APP_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-secret-change-me-0123456789abcdef}
     ports:
       - '127.0.0.1:4000:4000'
     depends_on:
-      postgres: { condition: service_healthy }
+      provision: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     healthcheck:
       test:
