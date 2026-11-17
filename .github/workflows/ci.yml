@@ -59,6 +59,11 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      # Tests create the roles and a fresh app_test database themselves (packages/db/src/testing.ts).
+      DATABASE_SUPERUSER_URL: postgres://postgres:postgres@localhost:5432/postgres
+      DATABASE_MIGRATOR_URL: postgres://app_migrator:app_migrator_ci@localhost:5432/app_test
+      DATABASE_URL: postgres://app_user:app_user_ci@localhost:5432/app_test
+      DATABASE_PLATFORM_URL: postgres://app_platform:app_platform_ci@localhost:5432/app_test
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/app_test
       TEST_REDIS_URL: redis://localhost:6379/1
     steps:

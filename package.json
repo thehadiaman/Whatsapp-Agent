@@ -8,15 +8,16 @@
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
-    "build:shared": "pnpm --filter @app/shared build",
+    "build:packages": "pnpm --filter './packages/*' build",
     "build": "pnpm -r build",
-    "dev": "pnpm build:shared && pnpm -r --parallel dev",
+    "dev": "pnpm build:packages && pnpm -r --parallel dev",
+    "db:provision": "pnpm build:packages && pnpm --filter @app/db run provision",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "pnpm build:shared && eslint . --max-warnings 0",
-    "typecheck": "pnpm build:shared && pnpm -r typecheck",
-    "test": "pnpm build:shared && pnpm -r test && scripts/commit-msg-check.test.sh",
-    "test:int": "pnpm build:shared && pnpm -r test:int"
+    "lint": "pnpm build:packages && eslint . --max-warnings 0",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "test": "pnpm build:packages && pnpm -r test && scripts/commit-msg-check.test.sh",
+    "test:int": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test:int"
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
