@@ -9,8 +9,20 @@
     "noEmit": true,
     "incremental": true,
     "declaration": false,
-    "plugins": [{ "name": "next" }]
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
-  "include": ["next-env.d.ts", "src", "next.config.ts", "vitest.config.ts", ".next/types/**/*.ts"],
+  "include": [
+    "next-env.d.ts",
+    "src",
+    "e2e",
+    "next.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    ".next/types/**/*.ts"
+  ],
   "exclude": ["node_modules"]
 }

@@ -44,5 +44,11 @@ export default defineConfig([
     settings: { next: { rootDir: 'apps/web' } },
   },
 
+  {
+    // Playwright fixtures call a function named `use`; it is not a React hook.
+    files: ['apps/web/e2e/**/*.ts'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
+  },
+
   prettier,
 ]);

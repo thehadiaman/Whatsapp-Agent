@@ -12,6 +12,8 @@ next-env.d.ts
 coverage/
 playwright-report/
 test-results/
+apps/web/e2e/.results/
+apps/web/e2e/screenshots/
 
 # local environment and data
 .env

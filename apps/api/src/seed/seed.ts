@@ -1,5 +1,5 @@
 import { schema, type Database } from '@app/db';
-import type { TenantRole } from '@app/shared';
+import { DEMO_BUSINESSES, type TenantRole } from '@app/shared';
 import { hashPassword } from 'better-auth/crypto';
 import { eq } from 'drizzle-orm';
 
@@ -75,31 +75,12 @@ export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<st
   return row.id;
 }
 
-/**
- * The two demo businesses (fictional). Conversations, knowledge and settings
- * are added to these in later phases.
- */
+/** The demo businesses from @app/shared, with a password for every member. */
 export function demoTenants(password: string): SeedTenant[] {
-  return [
-    {
-      slug: 'qamar-phone-corner',
-      name: 'Qamar Phone Corner',
-      timezone: 'Asia/Dubai',
-      members: [
-        { name: 'Anil Kumar', email: 'anil@qamar.example', role: 'owner', password },
-        { name: 'Priya Raman', email: 'priya@qamar.example', role: 'agent', password },
-      ],
-    },
-    {
-      slug: 'kayal-bakes',
-      name: 'Kayal Bakes',
-      timezone: 'Asia/Kolkata',
-      members: [
-        { name: 'Mariam Thomas', email: 'mariam@kayal.example', role: 'owner', password },
-        { name: 'Nikhil Varghese', email: 'nikhil@kayal.example', role: 'agent', password },
-      ],
-    },
-  ];
+  return DEMO_BUSINESSES.map((business) => ({
+    slug: business.slug,
+    name: business.name,
+    timezone: business.timezone,
+    members: business.staff.map((person) => ({ ...person, password })),
+  }));
 }
-
-export const DEMO_PLATFORM_ADMIN = { name: 'Platform admin', email: 'admin@desk.example' };

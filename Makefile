@@ -4,7 +4,7 @@ SHELL := /bin/bash
 # Export every variable in .env to the commands below (when the file exists).
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
-.PHONY: help setup infra db dev check test test-int images up down reset
+.PHONY: help setup infra db dev check test test-int e2e images up down reset
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -32,6 +32,9 @@ test: ## Unit tests only
 
 test-int: infra ## Integration tests against the Compose Postgres and Redis
 	$(LOAD_ENV) pnpm test:int
+
+e2e: db ## Playwright end-to-end tests at 1440 and 390 px (builds the API and web app first)
+	$(LOAD_ENV) pnpm --filter @app/web build && pnpm --filter @app/web run e2e
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build

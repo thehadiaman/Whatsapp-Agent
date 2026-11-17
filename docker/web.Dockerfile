@@ -5,6 +5,10 @@
 ARG NODE_IMAGE=node:24.22.3-trixie-slim
 
 FROM ${NODE_IMAGE} AS build
+# Where the web server proxies /api. Fixed at build time by Next.js rewrites;
+# in production Caddy routes /api directly and this proxy is not used.
+ARG API_INTERNAL_URL=http://api:4000
+ENV API_INTERNAL_URL=${API_INTERNAL_URL}
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
@@ -33,6 +37,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build --chown=node:node /repo/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /repo/apps/web/.next/static ./apps/web/.next/static
+# Standalone output does not include public/ (fonts, licences).
+COPY --from=build --chown=node:node /repo/apps/web/public ./apps/web/public
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]

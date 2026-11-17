@@ -1,7 +1,13 @@
 import { createDb } from '@app/db';
-import { nodeEnvSchema, parseEnv, postgresUrlSchema } from '@app/shared';
+import {
+  DEMO_DEFAULT_PASSWORD,
+  DEMO_PLATFORM_ADMIN,
+  nodeEnvSchema,
+  parseEnv,
+  postgresUrlSchema,
+} from '@app/shared';
 import { z } from 'zod';
-import { DEMO_PLATFORM_ADMIN, demoTenants, upsertTenant, upsertUser } from '../seed/seed.js';
+import { demoTenants, upsertTenant, upsertUser } from '../seed/seed.js';
 
 // Seeds the demo tenants and users. Idempotent: safe to run on every `make dev`.
 // In production the password must be given explicitly (public demo only).
@@ -20,7 +26,7 @@ const env = parseEnv(
   process.env,
 );
 
-const password = env.SEED_PASSWORD ?? 'counter-demo-2026';
+const password = env.SEED_PASSWORD ?? DEMO_DEFAULT_PASSWORD;
 const { db, close } = createDb(env.DATABASE_MIGRATOR_URL, { max: 1 });
 try {
   await upsertUser(db, { ...DEMO_PLATFORM_ADMIN, password, platformRole: 'admin' });
