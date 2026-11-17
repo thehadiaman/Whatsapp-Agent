@@ -125,9 +125,102 @@ Each entry records what was chosen, what was rejected, and why. Newest phase las
 - **Chosen:** `NEXT_TELEMETRY_DISABLED=1` in `.env.example`, the web image and CI.
 - **Why:** Next.js sends anonymous telemetry by default, and mock mode must make zero outbound calls.
 
+## Phase 1: tenancy and auth (2026-11-17)
+
+### D-018 Drizzle ORM for queries, hand-written SQL for security
+
+- **Chosen:** Drizzle for the schema and typed queries; `drizzle-kit generate` writes table migrations as SQL. Row-level security, grants and functions live in hand-written migration files.
+- **Rejected:** Kysely. It is the more SQL-first of the two, but Drizzle gives schema-as-code with generated migrations and has a maintained Better Auth adapter.
+- **Why hand-written security SQL:** policies and grants are the part a reviewer must read line by line, so they stay plain SQL rather than a DSL.
+
+### D-019 Three database roles; tenant isolation fails closed
+
+- **Chosen:**
+  - `app_migrator` owns the schema (BYPASSRLS, runs migrations and seeds).
+  - `app_user` is used by the API and worker. It cannot bypass RLS and owns nothing.
+  - `app_platform` can only execute platform-admin functions.
+  - Every tenant table has `ENABLE` and `FORCE ROW LEVEL SECURITY` with a policy on `app_current_tenant()`, which is `NULL` when no tenant is set, so reads return nothing and writes fail.
+- **Rejected:** filtering by `tenant_id` in application code only, and a single `BYPASSRLS` admin role.
+- **Why:** a forgotten `WHERE` clause cannot leak data, and the admin path is two narrow functions rather than a role that sees everything. This implements P-08.
+
+### D-020 Tenant context is set per transaction
+
+- **Chosen:** `withTenant()` runs `set_config('app.tenant_id', $1, true)` inside a transaction. Handlers reach tenant data only through `TenantDb.run()`.
+- **Rejected:** session-level `SET` on the connection.
+- **Why:** with a pool, a session-level setting can leak to the next request. A test proves the transaction-local setting is gone on the same pooled connection after commit.
+
+### D-021 One business per person in v1
+
+- **Chosen:** `memberships.user_id` is unique, so a session maps to exactly one tenant.
+- **Rejected:** a tenant switcher.
+- **Why:** shop and clinic staff work for one business. It removes an "active tenant" setting from the session and from the threat model.
+
+### D-022 Better Auth for sign-in
+
+- **Chosen:**
+  - Better Auth 1.7 with the Drizzle adapter: sessions in Postgres, httpOnly `SameSite=Lax` cookies, Secure in production.
+  - scrypt hashing (its default), passwords 12–128 characters.
+  - No public sign-up (P-03).
+  - Its handler is mounted in Express before the JSON body parser, as its docs require.
+- **Rejected:** Lucia (no longer maintained), Auth.js (built around OAuth and JWTs; deliberately limits password sign-in), a hand-rolled session store, and Argon2id (a native dependency; scrypt is an accepted current algorithm).
+- **Telemetry:** off explicitly, although it defaults to off.
+
+### D-023 CSRF: Origin check plus SameSite=Lax
+
+- **Chosen:** every POST, PUT, PATCH or DELETE must carry an `Origin` header equal to `PUBLIC_APP_URL`. Session cookies are `SameSite=Lax` as a second layer.
+- **Rejected:** synchronizer tokens.
+- **Why:** browsers always send `Origin` on these requests, the check is one line in one guard, and there is no token state to manage.
+
+### D-024 Sign-in rate limit, keyed on a header the proxy controls
+
+- **Chosen:** Better Auth's limiter: 5 sign-in attempts per minute per client IP, 100 requests per minute overall. The IP comes from `x-real-ip`. Memory storage is enough for one instance.
+- **Production requirement (phase 9):** Next.js's `/api` proxy passes client headers through unchanged (verified), so in production Caddy must route `/api` straight to the API and overwrite `X-Real-IP` with the remote address. Otherwise a client could choose its own bucket.
+- **Without an IP,** Better Auth falls back to one shared bucket per route: stricter, not open.
+- **Revisit:** move to Redis storage when a second instance arrives.
+
+### D-025 Routes fail closed
+
+- **Chosen:** one `AccessGuard` checks, in order, the Origin, the session, the membership (through `auth_membership()`) and the route's level (`public`, `signed-in`, `member`, `owner`, `platform-admin`). A route with no annotation is `member`.
+- **Why:** forgetting a decorator denies access instead of granting it.
+
+### D-026 Audit log is append-only and transactional
+
+- **Chosen:** `app_user` has only `SELECT` and `INSERT` on `audit_log`. Entries are written in the same transaction as the change and carry the request ID.
+- **Why:** a change and its record commit together or not at all, and the application cannot rewrite history.
+
+### D-027 Integration tests own their database
+
+- **Chosen:** each run drops and recreates `app_test`, creates the roles and applies migrations, using URLs derived from the dev ones. Suites create their own tenants with random slugs, so files can run in parallel.
+- **Why:** no test depends on leftover state, and no separate set of test URLs needs maintaining.
+
+### D-028 Demo data is defined once
+
+- **Chosen:** the demo businesses and staff live in `@app/shared`. The seed hashes passwords with Better Auth's own `hashPassword`, and the sign-in page lists the accounts in mock mode only.
+- **Why:** the seed and the page cannot disagree, and seeded users sign in through the normal path.
+
+### D-029 Self-hosted fonts, one file per script
+
+- **Chosen:** woff2 subsets from Google Fonts with OFL licences, stored in `apps/web/public/fonts` (786 KiB in total). `unicode-range` means a browser downloads only the scripts present on the page.
+- **Why:** mock mode must work offline and make no outbound calls.
+- **Deferred:** Anek Devanagari and Anek Malayalam, until display text in those scripts exists.
+
+### D-030 Tailwind with its defaults removed
+
+- **Chosen:** Tailwind 4 with `--color-*: initial` and `--font-*: initial`, so only the DESIGN.md tokens exist and an off-palette colour cannot be written.
+- **Lesson:** token names must not repeat across groups. A font size called `stamp` collided with the colour `stamp`: `text-stamp` rendered the top bar red and small. Screenshot review caught it, and the size is now `pane`.
+
+### D-031 End-to-end tests run the production server
+
+- **Chosen:** Playwright starts the built API and the same Next.js standalone server the Docker image runs (fonts and static files copied in). It runs at 1440 and 390 px and saves screenshots on every run. Each test uses its own `x-real-ip`.
+- **Why:** this caught that standalone output omits `public/`. The web image would have shipped without its fonts; the Dockerfile now copies it.
+
+### D-032 `NODE_ENV` is not set in `.env`
+
+- **Why:** the Makefile exports `.env` to every command, and `next build` with `NODE_ENV=development` fails when prerendering. Each tool sets it itself; the app config defaults to development.
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Nothing below is built yet.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. The rest are still open.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.

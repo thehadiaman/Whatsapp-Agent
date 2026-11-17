@@ -54,7 +54,11 @@ Multi-tenant WhatsApp AI support desk. The full brief is `docs/BRIEF.md`; decisi
 ## Commands
 
 - `make setup` — install dependencies, enable git hooks, create `.env` from `.env.example`.
-- `make dev` — start Postgres and Redis in Docker and all apps in watch mode (mock mode).
+- `make db` — database roles, migrations and demo seed (idempotent). `make dev` runs it first.
+- `make dev` — Postgres and Redis in Docker, all apps in watch mode (mock mode). Demo accounts are listed on the sign-in page.
 - `make check` — format check, lint, typecheck, unit tests, commit-message tests.
-- `make test-int` — integration tests against the Compose Postgres and Redis.
-- `make images` — build all production images locally.
+- `make test-int` — integration tests (row-level security, API isolation, auth) against real Postgres and Redis.
+- `make e2e` — Playwright at 1440 and 390 px; screenshots land in `apps/web/e2e/screenshots/`.
+- `make up` / `make down` — everything from the production images.
+- Tenant data is only reached through `TenantDb.run()` (API) or `withTenant()` (`@app/db`). Never connect the app as `app_migrator`.
+- pnpm gotcha: `setup` is a built-in pnpm command. Call package scripts with `pnpm --filter X run <script>`.
