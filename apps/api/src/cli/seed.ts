@@ -7,6 +7,7 @@ import {
   postgresUrlSchema,
 } from '@app/shared';
 import { z } from 'zod';
+import { seedConversations } from '../seed/conversations.js';
 import { demoTenants, upsertTenant, upsertUser } from '../seed/seed.js';
 
 // Seeds the demo tenants and users. Idempotent: safe to run on every `make dev`.
@@ -18,6 +19,8 @@ const env = parseEnv(
       NODE_ENV: nodeEnvSchema.default('development'),
       DATABASE_MIGRATOR_URL: postgresUrlSchema,
       SEED_PASSWORD: z.string().min(12).optional(),
+      /** Extra generated conversations for Qamar, to see the long-list state. */
+      SEED_BULK_CONVERSATIONS: z.coerce.number().int().min(0).max(2000).default(0),
     })
     .refine((e) => e.NODE_ENV !== 'production' || e.SEED_PASSWORD !== undefined, {
       message: 'SEED_PASSWORD is required in production',
@@ -33,7 +36,8 @@ try {
   for (const tenant of demoTenants(password)) {
     await upsertTenant(db, tenant);
   }
-  console.log('seed: demo tenants and users ready');
+  await seedConversations(db, { bulk: env.SEED_BULK_CONVERSATIONS });
+  console.log('seed: demo tenants, users and conversations ready');
 } finally {
   await close();
 }

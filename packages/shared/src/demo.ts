@@ -93,6 +93,12 @@ export const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     business: 'qamar-phone-corner',
   },
   {
+    name: 'Deepak Sharma',
+    bsuid: 'AE.40000000000000000007',
+    waId: '971500000107',
+    business: 'qamar-phone-corner',
+  },
+  {
     name: 'Sneha Kurian',
     bsuid: 'IN.40000000000000000005',
     waId: '919800000105',
@@ -102,6 +108,12 @@ export const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     name: 'Joseph Mathew',
     bsuid: 'IN.40000000000000000006',
     waId: '919800000106',
+    business: 'kayal-bakes',
+  },
+  {
+    name: 'Lakshmi Menon',
+    bsuid: 'IN.40000000000000000008',
+    waId: '919800000108',
     business: 'kayal-bakes',
   },
 ];
