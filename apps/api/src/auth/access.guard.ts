@@ -21,7 +21,8 @@ import type { Principal, RequestWithPrincipal } from './principal.js';
  * Who may call a route. Routes without an annotation default to `member`,
  * so forgetting the decorator fails closed.
  */
-export type AccessLevel = 'public' | 'signed-in' | 'member' | 'owner' | 'platform-admin';
+export type AccessLevel =
+  'public' | 'webhook' | 'signed-in' | 'member' | 'owner' | 'platform-admin';
 
 const ACCESS_KEY = 'access-level';
 export const Access = (level: AccessLevel) => SetMetadata(ACCESS_KEY, level);
@@ -57,6 +58,8 @@ export class AccessGuard implements CanActivate {
         context.getHandler(),
         context.getClass(),
       ]) ?? 'member';
+
+    if (level === 'webhook') return true;
 
     if (!SAFE_METHODS.has(request.method) && request.header('origin') !== this.origin) {
       throw new ForbiddenException(

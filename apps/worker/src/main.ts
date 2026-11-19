@@ -1,24 +1,64 @@
-import { baseEnvSchema, createLogger, parseEnv, redisUrlSchema } from '@app/shared';
+import { createDb } from '@app/db';
+import {
+  createQueues,
+  LocalDiskStorage,
+  pipelineEnvSchema,
+  pipelineSettings,
+  ProviderRegistry,
+  startWorkers,
+} from '@app/pipeline';
+import {
+  baseEnvSchema,
+  createLogger,
+  parseEnv,
+  postgresUrlSchema,
+  redisUrlSchema,
+} from '@app/shared';
 import { Redis } from 'ioredis';
 
-// Phase 0 skeleton: proves the worker starts, reaches Redis and shuts down
-// cleanly. Queues and job processors arrive with the WhatsApp pipeline (phase 2).
-
-const config = parseEnv(baseEnvSchema.extend({ REDIS_URL: redisUrlSchema }), process.env);
+const config = parseEnv(
+  baseEnvSchema
+    .extend(pipelineEnvSchema.shape)
+    .extend({ DATABASE_URL: postgresUrlSchema, REDIS_URL: redisUrlSchema }),
+  process.env,
+);
 const logger = createLogger({ service: 'worker', level: config.LOG_LEVEL });
 
-const redis = new Redis(config.REDIS_URL);
-redis.on('error', (error) => {
+// BullMQ workers block on Redis; their connection must not limit retries per request.
+const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+connection.on('error', (error) => {
   logger.warn({ err: error }, 'redis connection error');
 });
 
-await redis.ping();
+const database = createDb(config.DATABASE_URL, { max: 10 });
+database.pool.on('error', (error) => {
+  logger.warn({ err: error }, 'postgres idle client error');
+});
+const settings = pipelineSettings(config);
+const queues = createQueues(connection, settings, config.QUEUE_PREFIX);
+const workers = startWorkers(
+  {
+    db: database.db,
+    queues,
+    providers: ProviderRegistry.fromEnv(config),
+    storage: new LocalDiskStorage(config.MEDIA_STORAGE_DIR),
+    logger,
+    settings,
+  },
+  { connection, prefix: config.QUEUE_PREFIX },
+);
 logger.info({ mode: config.APP_MODE }, 'worker ready');
 
-function shutdown(signal: NodeJS.Signals): void {
+let stopping = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (stopping) return;
+  stopping = true;
   logger.info({ signal }, 'worker shutting down');
-  redis.disconnect();
+  // Finish the jobs in hand, then release connections.
+  await workers.close();
+  await queues.close();
+  await database.close();
+  connection.disconnect();
 }
-
-process.once('SIGTERM', shutdown);
-process.once('SIGINT', shutdown);
+process.once('SIGTERM', (signal) => void shutdown(signal));
+process.once('SIGINT', (signal) => void shutdown(signal));

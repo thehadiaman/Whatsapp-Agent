@@ -5,9 +5,10 @@ import {
   postgresUrlSchema,
   redisUrlSchema,
 } from '@app/shared';
+import { pipelineEnvSchema } from '@app/pipeline';
 import { z } from 'zod';
 
-export const apiEnvSchema = baseEnvSchema.extend({
+export const apiEnvSchema = baseEnvSchema.extend(pipelineEnvSchema.shape).extend({
   API_PORT: portSchema.default(4000),
   /** app_user: cannot bypass row-level security. */
   DATABASE_URL: postgresUrlSchema,

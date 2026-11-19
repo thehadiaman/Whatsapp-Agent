@@ -2,7 +2,7 @@ import type { Logger } from '@app/shared';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { toNodeHandler } from 'better-auth/node';
-import type { NextFunction, Request, Response } from 'express';
+import { raw, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
 import type { Auth } from './auth/auth.js';
@@ -35,6 +35,9 @@ export async function createApp(
     next();
   });
 
+  // Webhook signatures are computed over the exact bytes Meta sent, so this
+  // route keeps the raw body (Meta payloads are at most 3 MB).
+  app.use('/api/webhooks', raw({ type: () => true, limit: '3mb' }));
   app.useBodyParser('json', { limit: '100kb' });
   app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
   app.enableShutdownHooks();

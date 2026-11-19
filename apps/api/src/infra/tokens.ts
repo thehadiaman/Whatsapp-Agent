@@ -4,3 +4,5 @@ export const PLATFORM_DB = Symbol('PLATFORM_DB');
 export const REDIS = Symbol('REDIS');
 export const LOGGER = Symbol('LOGGER');
 export const AUTH = Symbol('AUTH');
+export const QUEUES = Symbol('QUEUES');
+export const PROVIDERS = Symbol('PROVIDERS');

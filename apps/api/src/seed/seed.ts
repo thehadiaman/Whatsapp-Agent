@@ -14,6 +14,8 @@ export interface SeedTenant {
   name: string;
   timezone: string;
   members: (SeedUser & { role: TenantRole })[];
+  /** A WhatsApp number on the simulator (provider `simulator`). */
+  channel?: { phoneNumberId: string; displayPhoneNumber: string };
 }
 
 /**
@@ -62,6 +64,19 @@ export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<st
     .returning({ id: schema.tenants.id });
   if (!row) throw new Error(`seed: could not upsert tenant ${tenant.slug}`);
 
+  if (tenant.channel) {
+    await db
+      .insert(schema.channels)
+      .values({
+        tenantId: row.id,
+        provider: 'simulator',
+        phoneNumberId: tenant.channel.phoneNumberId,
+        displayPhoneNumber: tenant.channel.displayPhoneNumber,
+        reopenTemplateName: 'reopen_conversation',
+      })
+      .onConflictDoNothing();
+  }
+
   for (const member of tenant.members) {
     const userId = await upsertUser(db, member);
     await db
@@ -81,6 +96,7 @@ export function demoTenants(password: string): SeedTenant[] {
     slug: business.slug,
     name: business.name,
     timezone: business.timezone,
+    channel: business.channel,
     members: business.staff.map((person) => ({ ...person, password })),
   }));
 }

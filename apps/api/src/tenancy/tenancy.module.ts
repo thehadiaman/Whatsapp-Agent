@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import {
   AuditLogController,
+  DeadLettersController,
   MeController,
   PlatformTenantsController,
   TeamController,
@@ -15,6 +16,7 @@ import { TenantDb } from './tenant-db.service.js';
     TeamController,
     AuditLogController,
     PlatformTenantsController,
+    DeadLettersController,
   ],
   providers: [TenantDb],
   exports: [TenantDb],

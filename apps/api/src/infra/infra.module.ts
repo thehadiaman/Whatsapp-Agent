@@ -1,9 +1,10 @@
 import { createDb, type DbHandle } from '@app/db';
+import { createQueues, pipelineSettings, ProviderRegistry, type Queues } from '@app/pipeline';
 import type { Logger } from '@app/shared';
 import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { API_CONFIG, type ApiConfig } from '../config.js';
-import { DB, LOGGER, PLATFORM_DB, REDIS } from './tokens.js';
+import { DB, LOGGER, PLATFORM_DB, PROVIDERS, QUEUES, REDIS } from './tokens.js';
 
 function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
   // An idle client erroring (e.g. Postgres restarted) must not crash the process.
@@ -44,18 +45,36 @@ function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
         return redis;
       },
     },
+    {
+      provide: QUEUES,
+      inject: [API_CONFIG],
+      useFactory: (config: ApiConfig): Queues =>
+        // BullMQ needs its own connection: no per-request retry limit.
+        createQueues(
+          new Redis(config.REDIS_URL, { maxRetriesPerRequest: null }),
+          pipelineSettings(config),
+          config.QUEUE_PREFIX,
+        ),
+    },
+    {
+      provide: PROVIDERS,
+      inject: [API_CONFIG],
+      useFactory: (config: ApiConfig) => ProviderRegistry.fromEnv(config),
+    },
   ],
-  exports: [DB, PLATFORM_DB, REDIS],
+  exports: [DB, PLATFORM_DB, REDIS, QUEUES, PROVIDERS],
 })
 export class InfraModule implements OnApplicationShutdown {
   constructor(
     @Inject(DB) private readonly db: DbHandle,
     @Inject(PLATFORM_DB) private readonly platformDb: DbHandle,
     @Inject(REDIS) private readonly redis: Redis,
+    @Inject(QUEUES) private readonly queues: Queues,
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
     this.redis.disconnect();
+    await this.queues.close();
     await Promise.all([this.db.close(), this.platformDb.close()]);
   }
 }

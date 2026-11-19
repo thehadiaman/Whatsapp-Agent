@@ -170,3 +170,32 @@ export class PlatformTenantsController {
     }));
   }
 }
+
+@Controller('admin/dead-letters')
+export class DeadLettersController {
+  constructor(@Inject(PLATFORM_DB) private readonly platform: DbHandle) {}
+
+  /** Jobs that retrying will not fix, newest first (brief §4: visible to the admin). */
+  @Get()
+  @Access('platform-admin')
+  async list() {
+    const result = await this.platform.db.execute<{
+      id: string;
+      tenant_name: string | null;
+      queue: string;
+      reference: string;
+      reason: string;
+      attempts: number;
+      failed_at: Date | string;
+    }>(sql`select * from platform_list_dead_letters(200)`);
+    return result.rows.map((row) => ({
+      id: row.id,
+      tenantName: row.tenant_name,
+      queue: row.queue,
+      reference: row.reference,
+      reason: row.reason,
+      attempts: row.attempts,
+      failedAt: new Date(row.failed_at).toISOString(),
+    }));
+  }
+}
