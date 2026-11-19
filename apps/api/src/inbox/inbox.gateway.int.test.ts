@@ -26,12 +26,17 @@ const sockets: Socket[] = [];
 
 const digits = (n: number) => Array.from({ length: n }, () => String(randomInt(10))).join('');
 
-function connect(cookie: string | null, origin: string = ORIGIN): Socket {
+function connect(
+  cookie: string | null,
+  origin: string = ORIGIN,
+  options: { transport?: 'websocket' | 'polling'; headers?: Record<string, string> } = {},
+): Socket {
   const socket = io(api.url, {
     path: INBOX_SOCKET_PATH,
-    transports: ['websocket'],
+    addTrailingSlash: false,
+    transports: [options.transport ?? 'websocket'],
     reconnection: false,
-    extraHeaders: { origin, ...(cookie ? { cookie } : {}) },
+    extraHeaders: options.headers ?? { origin, ...(cookie ? { cookie } : {}) },
   });
   sockets.push(socket);
   return socket;
@@ -102,6 +107,26 @@ describe('handshake', () => {
   it('refuses a signed-in user from another origin', async () => {
     const cookie = await signIn(api, a.agentEmail);
     expect(await refused(connect(cookie, 'https://evil.example'))).toBe('forbidden origin');
+  });
+
+  // Browsers send no Origin on a same-origin GET, which is what the polling
+  // handshake is. This is the request a real inbox makes in development.
+  it('accepts a same-origin polling handshake without an Origin header', async () => {
+    const cookie = await signIn(api, a.agentEmail);
+    const socket = connect(null, ORIGIN, {
+      transport: 'polling',
+      headers: { cookie, 'sec-fetch-site': 'same-origin' },
+    });
+    await connected(socket);
+  });
+
+  it('refuses a cross-site request that carries no Origin header', async () => {
+    const cookie = await signIn(api, a.agentEmail);
+    const socket = connect(null, ORIGIN, {
+      transport: 'polling',
+      headers: { cookie, 'sec-fetch-site': 'cross-site' },
+    });
+    expect(await refused(socket)).toBe('forbidden origin');
   });
 });
 

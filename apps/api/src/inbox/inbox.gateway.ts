@@ -26,14 +26,33 @@ interface SocketData {
 /**
  * Live updates for the inbox. Receive-only: clients cannot send events.
  *
- * - Handshake: Origin must be the web app (the WebSocket equivalent of the
- *   CSRF check), the session cookie must be valid, and the user must belong
- *   to a business. The socket joins only that business's room.
+ * - Handshake: the request must come from the web app (see
+ *   `fromTrustedOrigin`), the session cookie must be valid, and the user must
+ *   belong to a business. The socket joins only that business's room.
  * - Events come from Redis (worker and API publish there) and carry IDs
  *   only; the inbox refetches through the API, where row-level security
  *   applies, so a socket can never receive another tenant's content.
  */
-@WebSocketGateway({ path: INBOX_SOCKET_PATH, serveClient: false })
+// addTrailingSlash: false — proxies (Next.js rewrites in dev) drop the trailing
+// slash from /api/socket.io/, so match the path without it.
+/**
+ * Cross-site WebSocket hijacking guard. Browsers omit Origin on same-origin
+ * GET requests, and Socket.IO's polling handshake is a GET, so a missing
+ * Origin is normal. A cross-site browser request always carries Origin, or
+ * `Sec-Fetch-Site: cross-site`. A non-browser client can forge both headers
+ * anyway; the session check is what stops it.
+ */
+export function fromTrustedOrigin(
+  headers: Record<string, string | string[] | undefined>,
+  trusted: string,
+): boolean {
+  const origin = headers['origin'];
+  if (origin !== undefined) return origin === trusted;
+  const site = headers['sec-fetch-site'];
+  return site === undefined || site === 'same-origin';
+}
+
+@WebSocketGateway({ path: INBOX_SOCKET_PATH, addTrailingSlash: false, serveClient: false })
 export class InboxGateway implements OnGatewayInit, OnGatewayConnection, OnModuleDestroy {
   @WebSocketServer() private server!: Server;
   private subscriber: Redis | null = null;
@@ -76,7 +95,8 @@ export class InboxGateway implements OnGatewayInit, OnGatewayConnection, OnModul
   }
 
   private async authenticate(socket: Socket): Promise<void> {
-    if (socket.handshake.headers.origin !== this.origin) throw new Error('forbidden origin');
+    if (!fromTrustedOrigin(socket.handshake.headers, this.origin))
+      throw new Error('forbidden origin');
     const session = await this.auth.api.getSession({
       headers: fromNodeHeaders(socket.handshake.headers),
     });
