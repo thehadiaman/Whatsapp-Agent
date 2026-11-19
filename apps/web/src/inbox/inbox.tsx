@@ -49,7 +49,7 @@ export function Inbox({ me, initialSelectedId }: Props) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<{ text: string; retry: boolean } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -91,7 +91,17 @@ export function Inbox({ me, initialSelectedId }: Props) {
           setDetailError(null);
         },
         (error: unknown) => {
-          if (selectedRef.current === id) setDetailError(message(error));
+          if (selectedRef.current !== id) return;
+          // 404 also covers another business's conversation (row-level security
+          // hides it), so retrying cannot help.
+          setDetailError(
+            error instanceof ApiRequestError && error.status === 404
+              ? {
+                  text: "This conversation isn't in your inbox. The link may be wrong or for another business. Pick one from the list.",
+                  retry: false,
+                }
+              : { text: message(error), retry: true },
+          );
         },
       ),
     [],
@@ -385,14 +395,16 @@ export function Inbox({ me, initialSelectedId }: Props) {
                 </div>
               ) : detailError ? (
                 <div role="alert" className="m-4 border-l-4 border-stamp pl-3 text-stamp">
-                  <p>{detailError}</p>
-                  <button
-                    type="button"
-                    className="button button-quiet mt-2"
-                    onClick={() => void loadDetail(selectedId)}
-                  >
-                    Try again
-                  </button>
+                  <p>{detailError.text}</p>
+                  {detailError.retry ? (
+                    <button
+                      type="button"
+                      className="button button-quiet mt-2"
+                      onClick={() => void loadDetail(selectedId)}
+                    >
+                      Try again
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <p className="mono p-4 text-meta text-graphite">Loading conversation…</p>
