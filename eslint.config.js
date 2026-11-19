@@ -45,6 +45,13 @@ export default defineConfig([
   },
 
   {
+    // In tests a wrong `!` fails loudly on the next line; narrowing every
+    // lookup would bury the assertions that matter.
+    files: ['**/*.test.ts', '**/test/**/*.ts', 'apps/web/e2e/**/*.ts'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+  },
+
+  {
     // Playwright fixtures call a function named `use`; it is not a React hook.
     files: ['apps/web/e2e/**/*.ts'],
     rules: { 'react-hooks/rules-of-hooks': 'off' },
