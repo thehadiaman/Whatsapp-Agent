@@ -398,7 +398,7 @@ const OPENINGS = [
   'क्या आज डिलीवरी हो सकती है?',
   'What time do you close today?',
   'Do you buy old phones?',
-  'mera order kab aayega? KB-24',
+  'mera order kab aayega? KB-2417',
 ];
 
 async function seedBulk(
@@ -418,7 +418,7 @@ async function seedBulk(
     });
     const roll = i % 20;
     const at = 15 + i * 13; // spread over the last few days
-    const steps: Step[] = [{ in: `${OPENINGS[i % OPENINGS.length] ?? 'Hello'}${String(i)}`, at }];
+    const steps: Step[] = [{ in: OPENINGS[i % OPENINGS.length] ?? 'Hello', at }];
     if (roll < 14) {
       steps.push({ assistant: 'Thanks for your message. Let me check that for you.', at: at - 1 });
     } else if (roll < 16) {
