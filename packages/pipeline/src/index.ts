@@ -2,6 +2,7 @@ export * from './config.js';
 export * from './conversations.js';
 export * from './dead-letters.js';
 export * from './deps.js';
+export * from './events.js';
 export * from './inbound.js';
 export * from './ingest.js';
 export * from './media.js';

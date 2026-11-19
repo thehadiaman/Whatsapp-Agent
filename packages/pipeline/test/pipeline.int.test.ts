@@ -2,7 +2,9 @@ import { schema, withTenant } from '@app/db';
 import { statusPayload } from '@app/simulator';
 import { and, eq, isNull, like } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
+import { Redis } from 'ioredis';
 import { transitionConversation } from '../src/conversations.js';
+import { subscribeToEvents, type TenantEvent } from '../src/events.js';
 import { ingestWebhook } from '../src/ingest.js';
 import { queueReply, WindowClosedError } from '../src/outbound.js';
 import { enqueueOutbound } from '../src/queues.js';
@@ -330,6 +332,28 @@ describe('outbound', () => {
     await enqueueOutbound(h.deps.queues, { tenantId: h.tenant.id, messageId: id });
     await waitFor('cancelled', async () => (await message(id)).status === 'cancelled');
     expect(h.sim.state.thread(customer.id).filter((m) => m.direction === 'out')).toHaveLength(0);
+  });
+});
+
+describe('change events', () => {
+  it('announces a stored message to the right tenant, with IDs only', async () => {
+    h = await startHarness();
+    const subscriber = new Redis(h.redisUrl);
+    const events: TenantEvent[] = [];
+    const stop = await subscribeToEvents(subscriber, (e) => events.push(e), h.deps.logger);
+    try {
+      h.sim.sendInbound([{ customerId: h.customers[0]!.id, type: 'text', text: 'Hi' }]);
+      await waitFor('event', () => Promise.resolve(events.some((e) => e.tenantId === h.tenant.id)));
+      const conversation = await conversationOf(h.customers[0]!.bsuid);
+      expect(events.find((e) => e.tenantId === h.tenant.id)).toEqual({
+        type: 'conversation.changed',
+        tenantId: h.tenant.id,
+        conversationId: conversation.id,
+      });
+    } finally {
+      await stop();
+      subscriber.disconnect();
+    }
   });
 });
 

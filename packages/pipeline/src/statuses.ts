@@ -4,6 +4,7 @@ import { nextStatus, type MessageStatus } from './rules.js';
 
 /**
  * Folds every stored status event for a WhatsApp message into the message.
+ * Returns the conversation ID when the status changed, else null.
  * Safe to call any number of times, in any order: the result depends only on
  * the set of events (see `nextStatus`). Called when an event arrives and
  * again when a send returns, because Meta may report `sent` before our send
@@ -13,18 +14,19 @@ export async function applyStatusEvents(
   tx: Transaction,
   channelId: string,
   waMessageId: string,
-): Promise<void> {
+): Promise<string | null> {
   const [message] = await tx
     .select({
       id: schema.messages.id,
       status: schema.messages.status,
+      conversationId: schema.messages.conversationId,
     })
     .from(schema.messages)
     .where(
       and(eq(schema.messages.channelId, channelId), eq(schema.messages.waMessageId, waMessageId)),
     )
     .for('update');
-  if (!message) return;
+  if (!message) return null;
 
   const events = await tx
     .select()
@@ -47,7 +49,7 @@ export async function applyStatusEvents(
       errors = event.errors;
     }
   }
-  if (status === message.status || !at) return;
+  if (status === message.status || !at) return null;
 
   const firstError = Array.isArray(errors)
     ? (errors[0] as { code?: number; title?: string })
@@ -67,4 +69,5 @@ export async function applyStatusEvents(
         : {}),
     })
     .where(eq(schema.messages.id, message.id));
+  return message.conversationId;
 }

@@ -5,6 +5,7 @@ import {
   pipelineEnvSchema,
   pipelineSettings,
   ProviderRegistry,
+  RedisEventPublisher,
   startWorkers,
 } from '@app/pipeline';
 import {
@@ -34,6 +35,8 @@ const database = createDb(config.DATABASE_URL, { max: 10 });
 database.pool.on('error', (error) => {
   logger.warn({ err: error }, 'postgres idle client error');
 });
+// Publishing on its own connection keeps it independent of BullMQ's.
+const publisher = new Redis(config.REDIS_URL);
 const settings = pipelineSettings(config);
 const queues = createQueues(connection, settings, config.QUEUE_PREFIX);
 const workers = startWorkers(
@@ -44,6 +47,7 @@ const workers = startWorkers(
     storage: new LocalDiskStorage(config.MEDIA_STORAGE_DIR),
     logger,
     settings,
+    events: new RedisEventPublisher(publisher, logger),
   },
   { connection, prefix: config.QUEUE_PREFIX },
 );
@@ -59,6 +63,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   await queues.close();
   await database.close();
   connection.disconnect();
+  publisher.disconnect();
 }
 process.once('SIGTERM', (signal) => void shutdown(signal));
 process.once('SIGINT', (signal) => void shutdown(signal));

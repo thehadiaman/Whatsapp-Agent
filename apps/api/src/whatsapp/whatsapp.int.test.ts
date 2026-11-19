@@ -8,6 +8,7 @@ import { testDatabaseUrls } from '@app/db/testing';
 import {
   createQueues,
   LocalDiskStorage,
+  noEvents,
   ProviderRegistry,
   startWorkers,
   type Queues,
@@ -139,6 +140,7 @@ beforeAll(async () => {
         }),
       }),
       settings,
+      events: noEvents,
     },
     { connection, prefix },
   );

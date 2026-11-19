@@ -74,6 +74,7 @@ export async function processWebhookEvent(
   }
 
   const mediaJobs: { tenantId: string; messageId: string }[] = [];
+  const changed: { tenantId: string; conversationId: string }[] = [];
   for (const value of values) {
     const phoneNumberId = value.metadata.phone_number_id;
     const route = await routeChannel(deps.db, event.provider, phoneNumberId);
@@ -97,10 +98,12 @@ export async function processWebhookEvent(
           continue;
         }
         result.inboundMessageIds.push(stored.id);
+        changed.push({ tenantId: route.tenantId, conversationId: stored.conversationId });
         if (stored.hasMedia) mediaJobs.push({ tenantId: route.tenantId, messageId: stored.id });
       }
       for (const status of value.statuses ?? []) {
-        await storeStatus(tx, route, status);
+        const conversationId = await storeStatus(tx, route, status);
+        if (conversationId) changed.push({ tenantId: route.tenantId, conversationId });
       }
     });
     if (value.errors?.length) {
@@ -113,6 +116,9 @@ export async function processWebhookEvent(
 
   // After commit: the rows exist before any job can look for them.
   for (const job of mediaJobs) await enqueueMedia(deps.queues, job);
+  const unique = new Map(changed.map((c) => [c.conversationId, c]));
+  for (const c of unique.values())
+    await deps.events.conversationChanged(c.tenantId, c.conversationId);
   await markProcessed(deps.db, eventId, null);
   deps.logger.info(
     { eventId, stored: result.inboundMessageIds.length, duplicates: result.duplicates },
@@ -240,7 +246,7 @@ async function storeInbound(
   route: Route,
   value: MessagesValue,
   message: InboundMessage,
-): Promise<{ id: string; hasMedia: boolean } | null> {
+): Promise<{ id: string; conversationId: string; hasMedia: boolean } | null> {
   const bsuid = message.from_user_id ?? null;
   const waId = message.from ?? null;
   const customerId = await upsertCustomer(tx, route.tenantId, {
@@ -291,11 +297,15 @@ async function storeInbound(
     })
     .where(eq(schema.conversations.id, conversationId));
 
-  return { id: inserted.id, hasMedia: 'media' in content };
+  return { id: inserted.id, conversationId, hasMedia: 'media' in content };
 }
 
-async function storeStatus(tx: Transaction, route: Route, status: WebhookStatus): Promise<void> {
-  if (!isWebhookStatus(status.status)) return;
+async function storeStatus(
+  tx: Transaction,
+  route: Route,
+  status: WebhookStatus,
+): Promise<string | null> {
+  if (!isWebhookStatus(status.status)) return null;
   await tx
     .insert(schema.messageStatusEvents)
     .values({
@@ -307,5 +317,5 @@ async function storeStatus(tx: Transaction, route: Route, status: WebhookStatus)
       errors: status.errors ?? null,
     })
     .onConflictDoNothing();
-  await applyStatusEvents(tx, route.channelId, status.id);
+  return applyStatusEvents(tx, route.channelId, status.id);
 }

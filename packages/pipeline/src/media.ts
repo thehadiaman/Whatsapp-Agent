@@ -15,7 +15,11 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
 
   const target = await withTenant(deps.db, tenantId, async (tx) => {
     const [message] = await tx
-      .select({ media: schema.messages.media, channelId: schema.messages.channelId })
+      .select({
+        media: schema.messages.media,
+        channelId: schema.messages.channelId,
+        conversationId: schema.messages.conversationId,
+      })
       .from(schema.messages)
       .where(eq(schema.messages.id, messageId));
     if (!message?.media || message.media.storageKey) return null;
@@ -23,7 +27,9 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
       .select({ provider: schema.channels.provider })
       .from(schema.channels)
       .where(eq(schema.channels.id, message.channelId));
-    return channel ? { media: message.media, provider: channel.provider } : null;
+    return channel
+      ? { media: message.media, provider: channel.provider, conversationId: message.conversationId }
+      : null;
   });
   if (!target) return;
 
@@ -40,4 +46,5 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
       .where(eq(schema.messages.id, messageId)),
   );
   deps.logger.info({ messageId, sizeBytes: file.bytes.byteLength }, 'inbound media stored');
+  await deps.events.conversationChanged(tenantId, target.conversationId);
 }

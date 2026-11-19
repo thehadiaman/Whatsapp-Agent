@@ -84,10 +84,11 @@ export async function queueReply(
 }
 
 type Prepared =
-  | { kind: 'skip'; reason: string }
+  | { kind: 'skip'; reason: string; changedConversationId?: string }
   | { kind: 'wait'; until: Date }
   | {
       kind: 'send';
+      conversationId: string;
       provider: 'meta' | 'simulator';
       phoneNumberId: string;
       channelId: string;
@@ -141,7 +142,11 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
         .update(schema.messages)
         .set({ status: 'cancelled', statusAt: now })
         .where(eq(schema.messages.id, message.id));
-      return { kind: 'skip', reason: 'a person took over; assistant reply cancelled' };
+      return {
+        kind: 'skip',
+        reason: 'a person took over; assistant reply cancelled',
+        changedConversationId: message.conversationId,
+      };
     }
 
     const earlier = await tx
@@ -169,7 +174,11 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
 
     if (message.kind === 'text' && !windowState(conversation.lastInboundAt, now).open) {
       await fail(tx, message.id, now, { code: 131047, message: new WindowClosedError().message });
-      return { kind: 'skip', reason: 'window closed' };
+      return {
+        kind: 'skip',
+        reason: 'window closed',
+        changedConversationId: message.conversationId,
+      };
     }
 
     const [channel] = await tx
@@ -196,6 +205,7 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
         : { kind: 'text', body: message.body ?? '' };
     return {
       kind: 'send',
+      conversationId: message.conversationId,
       provider: channel.provider,
       phoneNumberId: channel.phoneNumberId,
       channelId: channel.id,
@@ -207,6 +217,9 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
 
   if (prepared.kind === 'skip') {
     deps.logger.info({ messageId, reason: prepared.reason }, 'outbound skipped');
+    if (prepared.changedConversationId) {
+      await deps.events.conversationChanged(tenantId, prepared.changedConversationId);
+    }
     return;
   }
   if (prepared.kind === 'wait') {
@@ -239,9 +252,10 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
       // Statuses that arrived before this send returned can apply now.
       await applyStatusEvents(tx, prepared.channelId, wamid);
     });
+    await deps.events.conversationChanged(tenantId, prepared.conversationId);
     deps.logger.info({ messageId, attempt: prepared.attempt }, 'outbound sent');
   } catch (error) {
-    await handleSendError(deps, job, tenantId, messageId, error);
+    await handleSendError(deps, job, tenantId, messageId, prepared.conversationId, error);
   }
 }
 
@@ -250,6 +264,7 @@ async function handleSendError(
   job: Job,
   tenantId: string,
   messageId: string,
+  conversationId: string,
   error: unknown,
 ): Promise<never> {
   const graph = error instanceof GraphApiError ? error : null;
@@ -277,6 +292,7 @@ async function handleSendError(
       { messageId, code: stored.code, attempt: job.attemptsMade + 1 },
       'outbound failed; will retry',
     );
+    await deps.events.conversationChanged(tenantId, conversationId);
     throw error;
   }
 
@@ -291,6 +307,7 @@ async function handleSendError(
     attempts: job.attemptsMade + 1,
   });
   deps.logger.error({ messageId, code: stored.code }, 'outbound failed permanently');
+  await deps.events.conversationChanged(tenantId, conversationId);
   throw new UnrecoverableError(stored.message);
 }
 

@@ -12,6 +12,7 @@ import { createSimulator, seededRandom, type FaultSettings, type Simulator } fro
 import { SIGNATURE_HEADER, verifySignature } from '@app/whatsapp';
 import { Redis } from 'ioredis';
 import { ProviderRegistry } from '../src/config.js';
+import { RedisEventPublisher } from '../src/events.js';
 import type { PipelineDeps } from '../src/deps.js';
 import { ingestWebhook } from '../src/ingest.js';
 import { createQueues } from '../src/queues.js';
@@ -44,6 +45,7 @@ export interface Harness {
   tenant: TestTenant;
   customers: TestCustomer[];
   storageDir: string;
+  redisUrl: string;
   /** Another tenant on the same platform, for isolation tests. */
   createTenant(): Promise<TestTenant>;
   close(): Promise<void>;
@@ -174,6 +176,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const simServer = await sim.listen(0);
 
   const storageDir = await mkdtemp(join(tmpdir(), 'desk-media-'));
+  const publisher = new Redis(redisUrl);
   const deps: PipelineDeps = {
     db: app.db,
     queues,
@@ -197,6 +200,10 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       }),
     }),
     settings,
+    events: new RedisEventPublisher(
+      publisher,
+      createLogger({ service: 'events-test', level: 'error' }),
+    ),
   };
   const workers = startWorkers(deps, {
     connection,
@@ -213,6 +220,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     tenant,
     customers,
     storageDir,
+    redisUrl,
     createTenant: () => createTenant(migrator),
     close: async () => {
       await workers.close();
@@ -224,6 +232,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
         });
       });
       connection.disconnect();
+      publisher.disconnect();
       await Promise.all([app.close(), migrator.close()]);
     },
   };
