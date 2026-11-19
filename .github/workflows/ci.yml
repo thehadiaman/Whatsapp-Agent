@@ -111,6 +111,15 @@ jobs:
       PUBLIC_APP_URL: http://localhost:3000
       API_INTERNAL_URL: http://localhost:4000
       BETTER_AUTH_SECRET: ci-only-secret-ci-only-secret-0000000000
+      # The simulator stands in for WhatsApp; these values exist only in CI.
+      SIMULATOR_GRAPH_URL: http://localhost:4010
+      SIMULATOR_PUBLIC_URL: http://localhost:4010
+      SIMULATOR_WEBHOOK_URL: http://localhost:4000/api/webhooks/whatsapp/simulator
+      SIMULATOR_ACCESS_TOKEN: ci-sim-access-token
+      SIMULATOR_APP_SECRET: ci-sim-app-secret
+      SIMULATOR_VERIFY_TOKEN: ci-sim-verify-token
+      # The 300-conversation state from DESIGN.md, in the uploaded screenshots.
+      SEED_BULK_CONVERSATIONS: 300
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -119,9 +128,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Playwright starts the api, worker, simulator and web app from these builds.
+      - run: pnpm build
       - name: Database roles, migrations and demo seed
-        run: pnpm db:provision && pnpm --filter @app/api build && pnpm --filter @app/api run seed
-      - run: pnpm --filter @app/web build
+        run: pnpm db:provision && pnpm --filter @app/api run seed
       - name: Install Chromium
         run: pnpm --filter @app/web exec playwright install --with-deps chromium
       - run: pnpm --filter @app/web run e2e

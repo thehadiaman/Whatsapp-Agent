@@ -104,6 +104,18 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       provision: { condition: service_completed_successfully }
+    # Not published: only Compose and the deploy script read it.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4020/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   simulator:
     profiles: [app]
