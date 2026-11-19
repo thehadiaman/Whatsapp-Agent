@@ -12,6 +12,12 @@ import {
 import { Reflector } from '@nestjs/core';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql } from 'drizzle-orm';
+import {
+  GENERAL_LIMIT,
+  RATE_LIMIT_KEY,
+  RateLimiter,
+  type RouteLimit,
+} from '../common/rate-limit.js';
 import { API_CONFIG, trustedOrigin, type ApiConfig } from '../config.js';
 import { AUTH, DB } from '../infra/tokens.js';
 import type { Auth } from './auth.js';
@@ -36,7 +42,8 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * 2. Session: resolved through Better Auth from the httpOnly cookie.
  * 3. Membership: looked up through `auth_membership()`, the only cross-tenant
  *    read app_user is allowed.
- * 4. The route's access level.
+ * 4. Per-user rate limits.
+ * 5. The route's access level.
  */
 @Injectable()
 export class AccessGuard implements CanActivate {
@@ -46,6 +53,7 @@ export class AccessGuard implements CanActivate {
     private readonly reflector: Reflector,
     @Inject(AUTH) private readonly auth: Auth,
     @Inject(DB) private readonly db: DbHandle,
+    private readonly rateLimiter: RateLimiter,
     @Inject(API_CONFIG) config: ApiConfig,
   ) {
     this.origin = trustedOrigin(config);
@@ -87,6 +95,14 @@ export class AccessGuard implements CanActivate {
       role: row?.role ?? null,
     };
     request.principal = principal;
+
+    // Per-user limits (brief §7): one for everything, tighter ones on routes that write.
+    await this.rateLimiter.consume(principal.userId, GENERAL_LIMIT);
+    const routeLimit = this.reflector.getAllAndOverride<RouteLimit | undefined>(RATE_LIMIT_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (routeLimit) await this.rateLimiter.consume(principal.userId, routeLimit);
 
     switch (level) {
       case 'signed-in':

@@ -6,3 +6,5 @@ export const LOGGER = Symbol('LOGGER');
 export const AUTH = Symbol('AUTH');
 export const QUEUES = Symbol('QUEUES');
 export const PROVIDERS = Symbol('PROVIDERS');
+export const EVENTS = Symbol('EVENTS');
+export const STORAGE = Symbol('STORAGE');

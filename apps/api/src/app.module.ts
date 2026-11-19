@@ -3,6 +3,7 @@ import type { Logger } from '@app/shared';
 import { Module, type DynamicModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AccessGuard } from './auth/access.guard.js';
+import { RateLimiter } from './common/rate-limit.js';
 import { createAuth } from './auth/auth.js';
 import { API_CONFIG, type ApiConfig } from './config.js';
 import { HealthModule } from './health/health.module.js';
@@ -27,6 +28,7 @@ export class AppModule {
           inject: [DB],
           useFactory: (db: DbHandle) => createAuth(config, db.db, logger),
         },
+        RateLimiter,
         { provide: APP_GUARD, useClass: AccessGuard },
       ],
       exports: [API_CONFIG, LOGGER, AUTH],

@@ -1,10 +1,19 @@
 import { createDb, type DbHandle } from '@app/db';
-import { createQueues, pipelineSettings, ProviderRegistry, type Queues } from '@app/pipeline';
+import {
+  createQueues,
+  LocalDiskStorage,
+  pipelineSettings,
+  ProviderRegistry,
+  RedisEventPublisher,
+  type EventPublisher,
+  type ObjectStorage,
+  type Queues,
+} from '@app/pipeline';
 import type { Logger } from '@app/shared';
 import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { API_CONFIG, type ApiConfig } from '../config.js';
-import { DB, LOGGER, PLATFORM_DB, PROVIDERS, QUEUES, REDIS } from './tokens.js';
+import { DB, EVENTS, LOGGER, PLATFORM_DB, PROVIDERS, QUEUES, REDIS, STORAGE } from './tokens.js';
 
 function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
   // An idle client erroring (e.g. Postgres restarted) must not crash the process.
@@ -61,8 +70,21 @@ function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
       inject: [API_CONFIG],
       useFactory: (config: ApiConfig) => ProviderRegistry.fromEnv(config),
     },
+    {
+      provide: EVENTS,
+      inject: [REDIS, LOGGER],
+      useFactory: (redis: Redis, logger: Logger): EventPublisher =>
+        new RedisEventPublisher(redis, logger),
+    },
+    {
+      provide: STORAGE,
+      inject: [API_CONFIG],
+      // Mock mode: local disk, shared with the worker. Live mode: S3 (phase 7).
+      useFactory: (config: ApiConfig): ObjectStorage =>
+        new LocalDiskStorage(config.MEDIA_STORAGE_DIR),
+    },
   ],
-  exports: [DB, PLATFORM_DB, REDIS, QUEUES, PROVIDERS],
+  exports: [DB, PLATFORM_DB, REDIS, QUEUES, PROVIDERS, EVENTS, STORAGE],
 })
 export class InfraModule implements OnApplicationShutdown {
   constructor(

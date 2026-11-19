@@ -14,7 +14,7 @@ import {
   type Queues,
   type RunningWorkers,
 } from '@app/pipeline';
-import { createLogger } from '@app/shared';
+import { conversationDetailSchema, createLogger } from '@app/shared';
 import { createSimulator, type Simulator } from '@app/simulator';
 import { signPayload } from '@app/whatsapp';
 import { and, eq, like, sql } from 'drizzle-orm';
@@ -248,9 +248,10 @@ describe('the whole pipeline through the API', () => {
     });
     const id = await conversationId();
 
-    const before = await call(api, `/api/conversations/${id}/messages`, { cookie: agent });
+    const before = await call(api, `/api/conversations/${id}`, { cookie: agent });
     expect(before.status).toBe(200);
-    expect(before.json).toEqual([
+    const detail = conversationDetailSchema.parse(before.json);
+    expect(detail.timeline.filter((e) => e.type === 'message')).toEqual([
       expect.objectContaining({ direction: 'inbound', body: 'هل وصل طلبي؟ KB-2291' }),
     ]);
 
@@ -309,9 +310,7 @@ describe('the whole pipeline through the API', () => {
 
   it('another tenant cannot read, take over or reply to this conversation', async () => {
     const id = await conversationId();
-    expect(
-      (await call(api, `/api/conversations/${id}/messages`, { cookie: otherOwner })).status,
-    ).toBe(404);
+    expect((await call(api, `/api/conversations/${id}`, { cookie: otherOwner })).status).toBe(404);
     expect(
       (
         await call(api, `/api/conversations/${id}/hand-back`, {

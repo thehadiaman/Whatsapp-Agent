@@ -110,6 +110,7 @@ describe('conversation ownership', () => {
     expect(canTransition('human', 'assistant')).toBe(true);
     expect(canTransition('closed', 'assistant')).toBe(false);
     expect(canTransition('assistant', 'assistant')).toBe(false);
+    expect(canTransition('human', 'human')).toBe(true); // reassignment
   });
 
   it('never lets the assistant send while a person holds the conversation', () => {

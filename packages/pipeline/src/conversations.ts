@@ -23,6 +23,7 @@ export interface TransitionResult {
   conversationId: string;
   from: ConversationState;
   to: ConversationState;
+  previousHolderUserId: string | null;
 }
 
 /**
@@ -37,6 +38,8 @@ export async function transitionConversation(
     actor: Actor;
     reason: string;
     requestId?: string | null;
+    /** Who holds it when moving to `human`; defaults to the acting user (take over). */
+    holderUserId?: string;
     /** Rejects the change unless the current state is one of these. */
     from?: readonly ConversationState[];
   },
@@ -59,7 +62,10 @@ export async function transitionConversation(
     .update(schema.conversations)
     .set({
       state: input.to,
-      holderUserId: input.to === 'human' && input.actor.type === 'user' ? input.actor.userId : null,
+      holderUserId:
+        input.to === 'human'
+          ? (input.holderUserId ?? (input.actor.type === 'user' ? input.actor.userId : null))
+          : null,
       updatedAt: new Date(),
     })
     .where(eq(schema.conversations.id, conversation.id));
@@ -75,7 +81,12 @@ export async function transitionConversation(
     requestId: input.requestId ?? null,
   });
 
-  return { conversationId: conversation.id, from: conversation.state, to: input.to };
+  return {
+    conversationId: conversation.id,
+    from: conversation.state,
+    to: input.to,
+    previousHolderUserId: conversation.holderUserId,
+  };
 }
 
 function describeConflict(state: ConversationState): string {

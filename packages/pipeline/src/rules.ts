@@ -114,7 +114,8 @@ export function decideSend(
 const ALLOWED: Record<ConversationState, readonly ConversationState[]> = {
   assistant: ['waiting_for_human', 'human', 'closed'],
   waiting_for_human: ['human', 'assistant', 'closed'],
-  human: ['assistant', 'waiting_for_human', 'closed'],
+  // human → human: reassigned to another person.
+  human: ['assistant', 'waiting_for_human', 'human', 'closed'],
   closed: [],
 };
 
