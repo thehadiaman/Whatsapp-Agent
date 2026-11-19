@@ -322,7 +322,7 @@ describe('rate limits', () => {
   it('limits notes to 30 a minute per person', async () => {
     const id = await conversation(a);
     const statuses: number[] = [];
-    for (let i = 0; i < 31; i++) {
+    for (let i = 0; i < 30; i++) {
       statuses.push(
         (
           await post(`/api/conversations/${id}/notes`, cookies['ownerA']!, {
@@ -332,7 +332,13 @@ describe('rate limits', () => {
       );
     }
     expect(statuses.slice(0, 30).every((s) => s === 201)).toBe(true);
-    expect(statuses[30]).toBe(429);
+    const limited = await post(`/api/conversations/${id}/notes`, cookies['ownerA']!, {
+      text: 'one more',
+    });
+    expect(limited.status).toBe(429);
+    const retryAfter = Number(limited.headers.get('retry-after'));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(60);
     // Someone else on the team is unaffected.
     expect(
       (await post(`/api/conversations/${id}/notes`, cookies['agentA']!, { text: 'mine' })).status,

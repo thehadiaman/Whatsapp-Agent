@@ -12,6 +12,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql } from 'drizzle-orm';
+import type { Response } from 'express';
 import {
   GENERAL_LIMIT,
   RATE_LIMIT_KEY,
@@ -97,12 +98,13 @@ export class AccessGuard implements CanActivate {
     request.principal = principal;
 
     // Per-user limits (brief §7): one for everything, tighter ones on routes that write.
-    await this.rateLimiter.consume(principal.userId, GENERAL_LIMIT);
+    const response = context.switchToHttp().getResponse<Response>();
+    await this.rateLimiter.consume(principal.userId, GENERAL_LIMIT, response);
     const routeLimit = this.reflector.getAllAndOverride<RouteLimit | undefined>(RATE_LIMIT_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (routeLimit) await this.rateLimiter.consume(principal.userId, routeLimit);
+    if (routeLimit) await this.rateLimiter.consume(principal.userId, routeLimit, response);
 
     switch (level) {
       case 'signed-in':

@@ -23,7 +23,12 @@ export const GENERAL_LIMIT: RouteLimit = { name: 'all', limit: 600, windowSecond
 export class RateLimiter {
   constructor(@Inject(REDIS) private readonly redis: Redis) {}
 
-  async consume(userId: string, limit: RouteLimit): Promise<void> {
+  /** Throws 429 over the limit, and sets `Retry-After` on `response` when given. */
+  async consume(
+    userId: string,
+    limit: RouteLimit,
+    response?: { setHeader(name: string, value: string): unknown },
+  ): Promise<void> {
     const window = Math.floor(Date.now() / 1000 / limit.windowSeconds);
     const key = `ratelimit:${limit.name}:${userId}:${String(window)}`;
     const count = await this.redis.incr(key);
@@ -31,6 +36,7 @@ export class RateLimiter {
     if (count > limit.limit) {
       const retryAfter =
         limit.windowSeconds - (Math.floor(Date.now() / 1000) % limit.windowSeconds);
+      response?.setHeader('retry-after', String(retryAfter));
       throw new HttpException(
         {
           statusCode: 429,
