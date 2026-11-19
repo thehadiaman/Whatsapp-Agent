@@ -122,24 +122,24 @@ export async function conversationDetail(
     .where(eq(schema.conversations.id, conversationId));
   if (!row) return null;
 
-  const [messages, transitions, notes] = await Promise.all([
-    tx
-      .select({ message: schema.messages, senderName: schema.users.name })
-      .from(schema.messages)
-      .leftJoin(schema.users, eq(schema.users.id, schema.messages.senderUserId))
-      .where(eq(schema.messages.conversationId, conversationId))
-      .orderBy(asc(schema.messages.createdAt)),
-    tx
-      .select({ transition: schema.conversationTransitions, actorName: schema.users.name })
-      .from(schema.conversationTransitions)
-      .leftJoin(schema.users, eq(schema.users.id, schema.conversationTransitions.actorUserId))
-      .where(eq(schema.conversationTransitions.conversationId, conversationId)),
-    tx
-      .select({ note: schema.conversationNotes, authorName: schema.users.name })
-      .from(schema.conversationNotes)
-      .leftJoin(schema.users, eq(schema.users.id, schema.conversationNotes.authorUserId))
-      .where(eq(schema.conversationNotes.conversationId, conversationId)),
-  ]);
+  // Sequential on purpose: one transaction is one connection, which runs one
+  // query at a time (pg 9 rejects overlapping queries on a client).
+  const messages = await tx
+    .select({ message: schema.messages, senderName: schema.users.name })
+    .from(schema.messages)
+    .leftJoin(schema.users, eq(schema.users.id, schema.messages.senderUserId))
+    .where(eq(schema.messages.conversationId, conversationId))
+    .orderBy(asc(schema.messages.createdAt));
+  const transitions = await tx
+    .select({ transition: schema.conversationTransitions, actorName: schema.users.name })
+    .from(schema.conversationTransitions)
+    .leftJoin(schema.users, eq(schema.users.id, schema.conversationTransitions.actorUserId))
+    .where(eq(schema.conversationTransitions.conversationId, conversationId));
+  const notes = await tx
+    .select({ note: schema.conversationNotes, authorName: schema.users.name })
+    .from(schema.conversationNotes)
+    .leftJoin(schema.users, eq(schema.users.id, schema.conversationNotes.authorUserId))
+    .where(eq(schema.conversationNotes.conversationId, conversationId));
 
   const timeline: TimelineEntry[] = [
     ...messages.map(({ message: m, senderName }): TimelineEntry => ({
