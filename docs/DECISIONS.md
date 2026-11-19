@@ -347,6 +347,97 @@ Meta facts were checked against Meta's documentation on 2026-11-17: webhook and 
 - **A forged job naming the wrong tenant leaves its message queued.** The job is a no-op under RLS, but its job ID is then taken until the completed job is pruned. Only a bug or an attacker with queue access can do this.
 - **Templates:** only the reopen template, named per channel. The language is fixed to `en` until tenant settings (phase 6).
 
+## Phase 3: inbox with live updates, take over and hand back (2026-11-19)
+
+### D-049 Live updates carry IDs, not content
+
+- **Chosen:**
+  - The worker and the API publish `{tenantId, conversationId}` on one Redis pub/sub channel after each commit.
+  - A Socket.IO gateway forwards the conversation ID to that business's room. The inbox then refetches the list and the open conversation through the HTTP API.
+  - The socket is receive-only: clients cannot emit anything the server acts on.
+- **Rejected:**
+  - Pushing full conversation payloads. Every emit would need its own authorisation and shaping, outside row-level security.
+  - Postgres `LISTEN/NOTIFY`. It holds a connection per API process and loses notifications while that connection is down; Redis is already there for BullMQ.
+- **Why:** row-level security stays the only gate on content. A bug in room membership could leak at most an ID, never message text.
+- **After a reconnect:** everything is refetched, because events sent while offline are gone. The top bar and a banner say "Reconnecting…" and when updates paused.
+
+### D-050 The socket handshake accepts a missing Origin only from the same site
+
+- **Chosen:**
+  - If `Origin` is present, it must equal the web app's origin.
+  - If it is absent, `Sec-Fetch-Site` must be absent or `same-origin`.
+  - Then the session cookie and a business membership are required, as for HTTP.
+- **Why:**
+  - Browsers send no `Origin` on same-origin GET requests, and Socket.IO's polling handshake is a GET. The first, strict version refused every real browser; the integration test had missed it because its Node client always sent `Origin`.
+  - A cross-site browser request always carries `Origin` or `Sec-Fetch-Site: cross-site`, so cross-site WebSocket hijacking is still refused. Non-browser clients can forge either header; the session check is what stops them.
+- **Tests:** a same-origin polling handshake without `Origin` connects; a cross-site one without `Origin` is refused; a wrong `Origin` is refused.
+
+### D-051 The socket path has no trailing slash
+
+- **Chosen:** `addTrailingSlash: false` on the gateway and the client, so the path is `/api/socket.io?EIO=…`.
+- **Why:** Next.js rewrites strip the trailing slash, and its default 308 redirect sent the browser to a path the API did not serve. `skipTrailingSlashRedirect` stops the redirect.
+- **Known limit:** the Next.js rewrite does not carry the WebSocket upgrade, so in development and in the end-to-end tests Socket.IO stays on long-polling. Live updates still arrive. In production Caddy routes `/api` straight to the API; phase 9 must check that the upgrade works there.
+
+### D-052 Per-person rate limits in Redis
+
+- **Chosen:**
+  - A fixed-window counter in Redis per user and route group: 600 requests a minute overall, 60 replies, 30 notes.
+  - It is checked in the access guard after the session is known, and answers 429 with `Retry-After`.
+- **Rejected:** `@nestjs/throttler`. Its default store is per process, and a shared Redis store is a separate package, for what is one `INCR` and one `EXPIRE`.
+- **Webhooks:** still not limited (D-036).
+
+### D-053 Customer files are only shown inline when they cannot run code
+
+- **Chosen:**
+  - Only JPEG, PNG, WebP and audio are served inline.
+  - Everything else is served as `application/octet-stream` with `Content-Disposition: attachment`, and with `nosniff`.
+- **Why:** HTML, SVG or PDF sent by a customer and served from our origin could run script inside a signed-in staff session.
+
+### D-054 Conversations are numbered per business
+
+- **Chosen:**
+  - A counter on the tenant row, taken under a row lock when a conversation opens.
+  - Staff say "conversation 214", and the token in the list matches DESIGN.md.
+  - Existing conversations were numbered in the migration.
+- **Rejected:**
+  - A Postgres sequence per tenant: sequences sit outside row-level security, and creating one per tenant is DDL at runtime.
+  - `max(number) + 1`: two first messages at the same moment could get the same number.
+- **Cost:** new conversations for one business open one at a time. Each takes milliseconds.
+
+### D-055 One component owns the inbox state; no data-fetching library
+
+- **Chosen:**
+  - One client component holds the list, the open conversation and the connection state. It refetches when the socket names a conversation.
+  - Responses for a conversation that is no longer open are dropped.
+- **Rejected:** TanStack Query. The inbox has one list and one detail, and the socket decides when to refetch, so caching and invalidation rules would add a dependency without removing code.
+- **React Compiler rules:** refs are not read during render, and state is not set inside effects. Selecting a conversation is an event handler, and the initial selection comes from the URL on the server.
+
+### D-056 No list virtualisation
+
+- **Chosen:** queue rows use `content-visibility: auto` with an intrinsic size. The browser skips layout and paint for rows out of view.
+- **Rejected:** a virtualisation library. It breaks find-in-page and sticky group headings, and makes keyboard focus moves harder.
+- **Checked:** 300 open conversations (the DESIGN.md state) at 1440 and 390 px. Above roughly 2,000 open conversations a business would need paging. That is beyond the shops this is for.
+
+### D-057 Seed data is a small story, not random rows
+
+- **Chosen:**
+  - A script per demo business, with times relative to now. That gives a conversation held by a person with a note, one waiting with a 2,019-character message, one past the 24-hour window, Arabic, Malayalam and Hinglish.
+  - `SEED_BULK_CONVERSATIONS` adds generated conversations for the 300-conversation state. CI's end-to-end job uses 300.
+  - Seeding is idempotent.
+- **Why:** every state in DESIGN.md can be opened and screenshotted without clicking through a script first.
+
+### D-058 One transaction runs one query at a time
+
+- **Chosen:** queries inside `TenantDb.run()` or `withTenant()` are awaited one after another, never with `Promise.all`.
+- **Why:** a transaction is one connection, and pg runs one query at a time on it, so parallel queries gain nothing. pg 8 warns and pg 9 rejects them. The conversation detail query did this until the warning was traced in phase 3.
+
+### Known gaps after phase 3
+
+- **A revoked session keeps its socket until it reconnects.** It receives only conversation IDs; every refetch goes through the API, which refuses the revoked session. Disconnecting sockets on sign-out or removal belongs with staff management in phase 6.
+- **"Explain this reply"** shows its empty state until the assistant exists (phase 4).
+- **No presence or typing indicators.** Two people pressing Take over at once is safe: the first wins, and the second gets a 409 with the reason.
+- **The WebSocket upgrade through Caddy is unverified** until Caddy exists (phase 9, D-051).
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). The rest are still open.
