@@ -97,6 +97,8 @@ export const tenants = pgTable('tenants', {
   slug: text('slug').notNull().unique(),
   name: text('name').notNull(),
   timezone: text('timezone').notNull(),
+  /** Counter for conversations.number; taken under the tenant row's lock. */
+  nextConversationNumber: integer('next_conversation_number').notNull().default(1),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -216,6 +218,8 @@ export const conversations = pgTable(
     customerId: uuid('customer_id')
       .notNull()
       .references(() => customers.id, { onDelete: 'cascade' }),
+    /** Per-business number shown as the conversation's token, e.g. 047. */
+    number: integer('number').notNull(),
     state: conversationState('state').notNull().default('assistant'),
     /** The person holding the conversation when state is `human`. */
     holderUserId: uuid('holder_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -233,7 +237,26 @@ export const conversations = pgTable(
       .on(t.channelId, t.customerId)
       .where(sql`${t.state} <> 'closed'`),
     index('conversations_tenant_last_message_idx').on(t.tenantId, t.lastMessageAt),
+    unique('conversations_tenant_number_unique').on(t.tenantId, t.number),
   ],
+);
+
+/** Staff-only notes on a conversation: never sent to the customer. */
+export const conversationNotes = pgTable(
+  'conversation_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    authorUserId: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('conversation_notes_conversation_idx').on(t.conversationId, t.createdAt)],
 );
 
 export const actorType = pgEnum('actor_type', ['system', 'assistant', 'user']);

@@ -198,9 +198,22 @@ async function openConversation(
   const [open] = await findOpen();
   if (open) return open.id;
 
+  // The tenant row's lock serialises numbering; a lost race below leaves a gap, which is harmless.
+  const [counter] = await tx
+    .update(schema.tenants)
+    .set({ nextConversationNumber: sql`${schema.tenants.nextConversationNumber} + 1` })
+    .where(eq(schema.tenants.id, route.tenantId))
+    .returning({ next: schema.tenants.nextConversationNumber });
+  if (!counter) throw new Error('openConversation: tenant not visible');
+
   const [created] = await tx
     .insert(schema.conversations)
-    .values({ tenantId: route.tenantId, channelId: route.channelId, customerId })
+    .values({
+      tenantId: route.tenantId,
+      channelId: route.channelId,
+      customerId,
+      number: counter.next - 1,
+    })
     .onConflictDoNothing({
       target: [schema.conversations.channelId, schema.conversations.customerId],
       where: sql`state <> 'closed'`,

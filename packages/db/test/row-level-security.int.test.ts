@@ -67,6 +67,35 @@ afterAll(async () => {
   await Promise.all([migrator.close(), app.close(), platform.close()]);
 });
 
+describe('every tenant-owned table', () => {
+  it('has row-level security enabled and forced (catches a new table without a policy)', async () => {
+    const result = await migrator.db.execute<{
+      table: string;
+      enabled: boolean;
+      forced: boolean;
+    }>(sql`
+      select c.relname as table, c.relrowsecurity as enabled, c.relforcerowsecurity as forced
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r'
+        and exists (select 1 from pg_attribute a
+                    where a.attrelid = c.oid and a.attname = 'tenant_id' and not a.attisdropped)
+      order by c.relname`);
+    // Platform-level tables: no tenant until routed (webhook_events has no
+    // tenant_id) or readable only through a platform function (dead_letters).
+    const platformLevel = new Set(['dead_letters']);
+    const tenantTables = result.rows.filter((row) => !platformLevel.has(row.table));
+    expect(tenantTables.length).toBeGreaterThanOrEqual(9);
+    for (const row of tenantTables) {
+      expect({ table: row.table, enabled: row.enabled, forced: row.forced }).toEqual({
+        table: row.table,
+        enabled: true,
+        forced: true,
+      });
+    }
+  });
+});
+
 describe('app_user role', () => {
   it('is not a superuser and cannot bypass row-level security', async () => {
     const result = await app.db.execute<{ rolsuper: boolean; rolbypassrls: boolean }>(
