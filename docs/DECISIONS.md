@@ -218,9 +218,138 @@ Each entry records what was chosen, what was rejected, and why. Newest phase las
 
 - **Why:** the Makefile exports `.env` to every command, and `next build` with `NODE_ENV=development` fails when prerendering. Each tool sets it itself; the app config defaults to development.
 
+## Phase 2: simulator and WhatsApp pipeline in mock mode (2026-11-19)
+
+Meta facts were checked against Meta's documentation on 2026-11-17: webhook and status payloads, signatures, error codes, business-scoped user IDs, media, and voice messages.
+
+### D-033 Direct to Meta's Cloud API; protocol and domain in two packages
+
+- **Chosen:**
+  - The product calls Meta's Cloud API directly, with the Graph version set by `WHATSAPP_GRAPH_VERSION` (default `v26.0`).
+  - `@app/whatsapp` holds the protocol: payload schemas, signature check, the Graph client and error classes.
+  - `@app/pipeline` holds the domain: inbound processing, outbox, statuses, conversation state, queues and workers.
+  - The API and worker are thin shells around them, and tests run the same wiring.
+- **Rejected:**
+  - Resellers (Twilio, 360dialog, Gupshup): per-message markup, another vendor, and payloads that differ from Meta's.
+  - Unofficial WhatsApp Web libraries: they break WhatsApp's terms.
+
+### D-034 One deployment, two providers (P-01 built)
+
+- **Chosen:**
+  - A channel row records its provider (`meta` or `simulator`).
+  - Webhooks arrive on `/api/webhooks/whatsapp/:provider`, each checked with that provider's own app secret.
+  - In mock mode `ProviderRegistry` never configures Meta, so no environment value can make a mock process call Meta.
+- **Why:** the real number and the public simulator demo can share one server, and the product code is identical for both.
+
+### D-035 Customers are identified by business-scoped user ID first
+
+- **Chosen:** `customers` has a nullable `bsuid` and a nullable `wa_id`, with a check that at least one is present.
+  - Lookup is by BSUID first, then phone.
+  - Whichever identifier is learnt later gets filled in.
+  - Replies go to `recipient: <BSUID>` when one is known.
+- **Why:** since 2026 Meta omits the phone number for users with a username.
+
+### D-036 Store first, process later
+
+- **Chosen:**
+  - The webhook endpoint checks the HMAC over the raw bytes (the route has its own raw body parser), inserts the body into `webhook_events`, enqueues the event's ID and returns 200.
+  - A unique constraint on (channel, wamid) makes duplicates no-ops.
+  - A sweeper re-enqueues events whose job was lost between insert and enqueue.
+- **Why:** Meta retries for days, and duplicates are certain. A processing bug must not lose events, and the 200 must not depend on processing.
+
+### D-037 Statuses only move forward
+
+- **Chosen:**
+  - Every status webhook is kept in `message_status_events`, deduplicated per status.
+  - The message's status is a fold over those events: `sent` < `failed` < `delivered` < `read` < `played`.
+- **Why:**
+  - Any arrival order gives the same result.
+  - A status that arrives before our send call returns is applied when it does.
+
+### D-038 Reply ordering without BullMQ Pro (P-02 built)
+
+- **Chosen:**
+  - Every reply is a row in a transactional outbox, numbered per conversation.
+  - One BullMQ job per message, with the message ID as the job ID.
+  - The worker takes a per-conversation advisory lock. It sends only when every earlier reply has been sent, and the previous one is `delivered` or has waited `ORDER_HOLD_MS` (default 10 s).
+  - A waiting job is moved to delayed without using up an attempt.
+- **Rejected:**
+  - BullMQ Pro groups: paid.
+  - A queue per conversation: unbounded queues.
+  - Waiting forever for `delivered`: one offline phone would block its conversation.
+- **Why:** Meta says delivery order is not guaranteed and advises waiting for `delivered`.
+
+### D-039 Retry what can succeed; dead-letter the rest
+
+- **Retried with exponential backoff:**
+  - Meta's rate-limit and transient codes: 1, 2, 4, 80007, 130429, 131000, 131016 and 131056.
+  - 5xx responses and network errors.
+- **Failed at once:** 131047 (window closed), 100, 131009 and 131026.
+- **Dead letters** live in a Postgres table, written on a permanent error or once retries run out, and only platform admins can read them.
+- **Rejected:** BullMQ's failed set as the dead-letter queue. It isn't queryable alongside tenant names, and it disappears with Redis.
+
+### D-040 The 24-hour window is checked twice
+
+- **Chosen:** free text is refused when queued (409, `window_closed`) and checked again at send time, without calling the API.
+- **Window tracking:** `last_inbound_at` only moves forward, so a late, older message cannot reopen or shift the window.
+
+### D-041 The assistant never sends while a person holds the conversation
+
+- **Chosen:**
+  - Ownership changes go only through `transitionConversation()`. It locks the row, checks the move is allowed, sets the holder, and logs the transition with actor and reason.
+  - API-initiated changes also write an audit-log entry.
+  - At send time, an assistant reply in a conversation that is no longer `assistant` is cancelled.
+  - Staff can reply only while they hold the conversation.
+
+### D-042 A send that times out may arrive twice
+
+- **Accepted risk:** I found no idempotency key in the Cloud API send endpoint. A request that reaches Meta but whose answer is lost is retried, and the customer may see it twice.
+- **Mitigation:** a 10-second client timeout, and the send is logged as ambiguous. Revisit if Meta adds idempotency keys.
+
+### D-043 Simulator written independently of the parser
+
+- **Chosen:**
+  - The simulator builds Meta's payloads with its own code, not the product's schemas.
+  - A test compares its payloads key-for-key with Meta's documented examples, and the product's parser is tested against the same examples.
+  - Express 5 (already in the dependency tree via NestJS).
+  - The page is deliberately not styled like WhatsApp.
+- **Why:** shared code would let the two agree with each other while both disagree with Meta.
+- **Exception:** the media upload route parses multipart with `Request.formData()`, which Node marks as not recommended on servers. It is acceptable for small test uploads, and avoids a parser dependency. The exception is commented in the code.
+
+### D-044 Inbound media is copied at once
+
+- **Chosen:** a media job exchanges the media ID for a URL and stores the file under `tenants/{tenantId}/media/{messageId}`. In mock mode that is local disk; in live mode it will be S3 (phase 7).
+- **Why:** Meta's URLs expire after 5 minutes.
+- **Safety:** keys are validated against a strict pattern, so path traversal is impossible.
+
+### D-045 Logs mask personal data
+
+- **Chosen:** pino `redact` masks text, body, caption, phone, `waId`/`wa_id`, `bsuid`, `from`, `to`, `recipient` and credentials, at the top level and one level down.
+- **Verified:** a full containerised run logged zero occurrences of the message text, order number or phone number.
+
+### D-046 Pipeline integration tests run one file at a time
+
+- **Chosen:** each test file gets its own BullMQ prefix, and the pipeline's integration files run serially.
+- **Why:** the sweeper correctly sees every tenant's stuck replies, as in production's single worker fleet. Parallel files acted as several fleets on one database and picked up each other's messages. That was a test artefact, not a product bug.
+
+### D-047 Docker builds use `pnpm fetch`
+
+- **Chosen:** fetch from the lockfile alone, which is cached until the lockfile changes; then copy the source and install offline.
+- **Rejected:** listing each workspace package in the Dockerfile. It broke as soon as two packages were added.
+
+### D-048 Non-null assertions are allowed in tests only
+
+- **Why:** a wrong `!` in a test fails loudly on the next line, while narrowing every lookup would bury the assertions that matter. Production code keeps the rule.
+
+### Known gaps after phase 2
+
+- **No general API rate limit yet.** Sign-in is limited (D-024). A per-user limit for staff routes arrives with the inbox endpoints in phase 3. Webhooks are deliberately not limited, because Meta sends bursts.
+- **A forged job naming the wrong tenant leaves its message queued.** The job is a no-op under RLS, but its job ID is then taken until the completed job is pruned. Only a bug or an attacker with queue access can do this.
+- **Templates:** only the reopen template, named per channel. The language is fixed to `en` until tenant settings (phase 6).
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. The rest are still open.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). The rest are still open.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.
