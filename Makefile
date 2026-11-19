@@ -1,8 +1,11 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# Export every variable in .env to the commands below (when the file exists).
-LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
+# Read .env as make variables and export them to every command. Values given
+# on the command line win, e.g. when port 3000 is taken:
+#   make dev WEB_PORT=3300 PUBLIC_APP_URL=http://localhost:3300
+-include .env
+export
 
 .PHONY: help setup infra db dev check test test-int e2e images up down reset
 
@@ -19,22 +22,22 @@ infra: ## Start Postgres and Redis and wait until healthy
 	docker compose up -d --wait postgres redis
 
 db: infra ## Create database roles, apply migrations, seed demo data (idempotent)
-	$(LOAD_ENV) pnpm db:provision && pnpm --filter @app/api build && pnpm --filter @app/api run seed
+	pnpm db:provision && pnpm --filter @app/api build && pnpm --filter @app/api run seed
 
 dev: db ## Run the product in mock mode: infra in Docker, apps on the host in watch mode
-	$(LOAD_ENV) pnpm dev
+	pnpm dev
 
 check: ## Format check, lint, typecheck, unit tests, commit-message tests
-	$(LOAD_ENV) pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
+	pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
 
 test: ## Unit tests only
-	$(LOAD_ENV) pnpm test
+	pnpm test
 
 test-int: infra ## Integration tests against the Compose Postgres and Redis
-	$(LOAD_ENV) pnpm test:int
+	pnpm test:int
 
 e2e: db ## Playwright end-to-end tests at 1440 and 390 px (builds the API and web app first)
-	$(LOAD_ENV) pnpm --filter @app/web build && pnpm --filter @app/web run e2e
+	pnpm --filter @app/web build && pnpm --filter @app/web run e2e
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build

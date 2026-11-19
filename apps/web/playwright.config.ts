@@ -4,6 +4,8 @@ import { defineConfig } from '@playwright/test';
 // database (`make db`). Run them with `make e2e`. Locally, servers already
 // running from `make dev` are reused.
 const ci = Boolean(process.env['CI']);
+// Must match the port in PUBLIC_APP_URL: the API's CSRF check compares Origin exactly.
+const webPort = process.env['WEB_PORT'] ?? '3000';
 
 export default defineConfig({
   testDir: './e2e',
@@ -12,8 +14,7 @@ export default defineConfig({
   retries: ci ? 1 : 0,
   reporter: ci ? 'github' : 'list',
   use: {
-    // Must match PUBLIC_APP_URL: the API's CSRF check compares Origin exactly.
-    baseURL: 'http://localhost:3000',
+    baseURL: `http://localhost:${webPort}`,
     trace: 'retain-on-failure',
   },
   projects: [
@@ -30,9 +31,8 @@ export default defineConfig({
     {
       // The same standalone server the Docker image runs. Run through sh with
       // `exec` (not pnpm) so Playwright's shutdown signal reaches the server.
-      command:
-        "sh -c 'cp -r .next/static .next/standalone/apps/web/.next/ && cp -r public .next/standalone/apps/web/ && HOSTNAME=localhost PORT=3000 exec node .next/standalone/apps/web/server.js'",
-      url: 'http://127.0.0.1:3000/health',
+      command: `sh -c 'cp -r .next/static .next/standalone/apps/web/.next/ && cp -r public .next/standalone/apps/web/ && HOSTNAME=localhost PORT=${webPort} exec node .next/standalone/apps/web/server.js'`,
+      url: `http://127.0.0.1:${webPort}/health`,
       reuseExistingServer: !ci,
       timeout: 120_000,
     },
