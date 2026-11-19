@@ -23,6 +23,24 @@ describe('createLogger', () => {
     expect(String(lines[0]?.['time'])).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('masks phone numbers, customer identifiers and message text', () => {
+    const { lines, destination } = capture();
+    createLogger({ service: 'worker', level: 'info', destination }).info(
+      {
+        waId: '971500000101',
+        bsuid: 'AE.40000000000000000001',
+        message: { body: 'My order number is KB-2291', to: '971500000101' },
+        messageId: 'kept',
+      },
+      'processing',
+    );
+    const line = JSON.stringify(lines[0]);
+    expect(line).not.toContain('971500000101');
+    expect(line).not.toContain('AE.4000');
+    expect(line).not.toContain('KB-2291');
+    expect(line).toContain('kept');
+  });
+
   it('drops lines below the configured level', () => {
     const { lines, destination } = capture();
     const logger = createLogger({ service: 'worker', level: 'warn', destination });
