@@ -17,16 +17,11 @@ RUN corepack enable
 WORKDIR /repo
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/shared/package.json packages/shared/
-COPY packages/db/package.json packages/db/
-COPY apps/web/package.json apps/web/
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter "@app/web..."
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch
 
-COPY tsconfig.base.json ./
-COPY packages/shared packages/shared
-COPY packages/db packages/db
-COPY apps/web apps/web
+COPY . .
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --filter "@app/web..."
 RUN pnpm --filter "@app/web..." build
 
 FROM ${NODE_IMAGE} AS runtime

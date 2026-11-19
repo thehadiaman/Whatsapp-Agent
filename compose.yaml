@@ -12,6 +12,13 @@ x-app-env: &app-env
   DATABASE_URL: postgres://app_user:app_user_dev@postgres:5432/app
   DATABASE_PLATFORM_URL: postgres://app_platform:app_platform_dev@postgres:5432/app
   REDIS_URL: redis://redis:6379/0
+  # Simulator numbers: the API and worker reach the simulator inside the network.
+  SIMULATOR_GRAPH_URL: http://simulator:4010
+  SIMULATOR_ACCESS_TOKEN: sim-access-token-dev
+  SIMULATOR_APP_SECRET: sim-app-secret-dev
+  SIMULATOR_VERIFY_TOKEN: sim-verify-token-dev
+  # Mock-mode media; the app directory is not writable by the node user. Live mode uses S3.
+  MEDIA_STORAGE_DIR: /tmp/desk-media
 
 services:
   postgres:
@@ -70,7 +77,7 @@ services:
       PUBLIC_APP_URL: http://localhost:3000
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-secret-change-me-0123456789abcdef}
     ports:
-      - '127.0.0.1:4000:4000'
+      - '127.0.0.1:${API_HOST_PORT:-4000}:4000'
     depends_on:
       provision: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -96,6 +103,7 @@ services:
       <<: *app-env
     depends_on:
       redis: { condition: service_healthy }
+      provision: { condition: service_completed_successfully }
 
   simulator:
     profiles: [app]
@@ -106,8 +114,12 @@ services:
     environment:
       <<: *app-env
       SIMULATOR_PORT: '4010'
+      SIMULATOR_HOST: 0.0.0.0
+      SIMULATOR_WEBHOOK_URL: http://api:4000/api/webhooks/whatsapp/simulator
+      # Media URLs are fetched by the worker, inside the network.
+      SIMULATOR_PUBLIC_URL: http://simulator:4010
     ports:
-      - '127.0.0.1:4010:4010'
+      - '127.0.0.1:${SIMULATOR_HOST_PORT:-4010}:4010'
     healthcheck:
       test:
         [
@@ -130,7 +142,7 @@ services:
       APP_MODE: ${APP_MODE:-mock}
       API_INTERNAL_URL: http://api:4000
     ports:
-      - '127.0.0.1:3000:3000'
+      - '127.0.0.1:${WEB_HOST_PORT:-3000}:3000'
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
