@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
-// End-to-end tests drive the real web app and the real API against the seeded
-// database (`make db`). Run them with `make e2e`. Locally, servers already
-// running from `make dev` are reused.
+// End-to-end tests drive the real web app, API, worker and simulator against the
+// seeded database (`make db`), in mock mode. Run them with `make e2e`. Locally,
+// servers already running from `make dev` are reused.
 const ci = Boolean(process.env['CI']);
 // Must match the port in PUBLIC_APP_URL: the API's CSRF check compares Origin exactly.
 const webPort = process.env['WEB_PORT'] ?? '3000';
@@ -22,6 +22,20 @@ export default defineConfig({
     { name: 'mobile', use: { viewport: { width: 390, height: 844 }, hasTouch: true } },
   ],
   webServer: [
+    {
+      // Receives the simulator's webhooks and sends replies back to it.
+      command: 'node ../worker/dist/main.js',
+      url: 'http://127.0.0.1:4020/health',
+      reuseExistingServer: !ci,
+      timeout: 60_000,
+    },
+    {
+      // Plays the customers' phones (WhatsApp Cloud API stand-in).
+      command: 'node ../simulator/dist/main.js',
+      url: 'http://127.0.0.1:4010/health',
+      reuseExistingServer: !ci,
+      timeout: 60_000,
+    },
     {
       command: 'node ../api/dist/main.js',
       url: 'http://127.0.0.1:4000/ready',

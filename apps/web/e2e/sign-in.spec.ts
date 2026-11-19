@@ -8,7 +8,7 @@ test.describe('signing in', () => {
     const header = page.getByRole('banner');
     await expect(header).toContainText('Qamar Phone Corner');
     await expect(header).toContainText('agent');
-    await expect(page.getByRole('heading', { name: 'No conversations yet' })).toBeVisible();
+    await expect(page.getByLabel('Conversations', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page).toHaveURL(/\/sign-in$/);

@@ -36,8 +36,8 @@ test: ## Unit tests only
 test-int: infra ## Integration tests against the Compose Postgres and Redis
 	pnpm test:int
 
-e2e: db ## Playwright end-to-end tests at 1440 and 390 px (builds the API and web app first)
-	pnpm --filter @app/web build && pnpm --filter @app/web run e2e
+e2e: db ## Playwright end-to-end tests at 1440 and 390 px (builds every app first)
+	pnpm build && pnpm --filter @app/web run e2e
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build
