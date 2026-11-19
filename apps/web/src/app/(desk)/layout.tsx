@@ -2,6 +2,7 @@ import { meResponseSchema } from '@app/shared';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { apiGet } from '../../lib/server-api';
+import { ConnectionStatus } from './connection-status';
 import { SectionNav } from './section-nav';
 import { SignOutButton } from './sign-out-button';
 
@@ -26,6 +27,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
         </span>
         <SectionNav sections={sections} />
         <div className="ml-auto flex items-center gap-3">
+          {membership ? <ConnectionStatus /> : null}
           <span className="hidden text-list sm:inline">{user.name}</span>
           <span className="mono text-meta text-graphite">
             {membership?.role ?? 'platform admin'}

@@ -1,21 +1,26 @@
+import { meResponseSchema } from '@app/shared';
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
+import { Inbox } from '../../../inbox/inbox';
+import { apiGet } from '../../../lib/server-api';
 
 export const metadata: Metadata = { title: 'Inbox' };
+export const dynamic = 'force-dynamic';
 
-// The three-pane inbox arrives in phase 3; until then this is its empty state.
-export default function InboxPage() {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { c } = await searchParams;
+  const initialSelectedId = typeof c === 'string' && /^[0-9a-f-]{36}$/i.test(c) ? c : null;
+  const me = await apiGet('/api/me', meResponseSchema);
+  if (!me.ok) redirect('/sign-in');
+  if (!me.data.membership) redirect('/admin');
   return (
-    <main className="mx-auto max-w-[640px] px-4 py-16">
-      <div className="flex gap-4">
-        <div aria-hidden className="w-0.5 shrink-0 bg-graphite" />
-        <div>
-          <h1 className="text-title font-semibold">No conversations yet</h1>
-          <p className="mt-1 text-graphite">
-            Customer messages from WhatsApp appear here as soon as your number is connected. The
-            assistant answers first; you can take over any conversation.
-          </p>
-        </div>
-      </div>
-    </main>
+    <Inbox
+      me={{ id: me.data.user.id, name: me.data.user.name, role: me.data.membership.role }}
+      initialSelectedId={initialSelectedId}
+    />
   );
 }

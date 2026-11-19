@@ -144,6 +144,76 @@
     color: var(--color-ink);
   }
 
+  /*
+   * The custody margin (DESIGN.md §3): who holds the conversation, drawn like
+   * the ruled margin of a ledger. Never colour alone: width and pattern differ
+   * too, and every row also carries a text stamp.
+   */
+  .custody {
+    width: 6px;
+    flex-shrink: 0;
+    align-self: stretch;
+    transition: background-color 180ms ease-out;
+  }
+  .custody-assistant {
+    background: linear-gradient(var(--color-graphite), var(--color-graphite)) left / 2px 100%
+      no-repeat;
+  }
+  .custody-waiting_for_human {
+    background: repeating-linear-gradient(45deg, var(--color-stamp) 0 2px, transparent 2px 4px);
+  }
+  .custody-human {
+    background: var(--color-ballpoint);
+  }
+  .custody-closed {
+    background: transparent;
+  }
+
+  /* Stamp colours follow the holder; filled when it is you. */
+  .stamp-assistant {
+    color: var(--color-graphite);
+  }
+  .stamp-waiting_for_human {
+    color: var(--color-stamp);
+  }
+  .stamp-human {
+    color: var(--color-ballpoint);
+  }
+  .stamp-mine {
+    background: var(--color-ballpoint);
+    border-color: var(--color-ballpoint);
+    color: var(--color-sheet);
+  }
+  .stamp-closed {
+    color: var(--color-graphite);
+    border-style: dashed;
+  }
+
+  /* An ownership change ruled across the thread. */
+  .ledger-entry {
+    border-top: 3px double currentColor;
+    padding-top: 2px;
+  }
+
+  /* Internal note: the yellow duplicate that never leaves the shop. */
+  .slip {
+    background: var(--color-carbon);
+    border-top: 1px dashed var(--color-rule-strong);
+    border-radius: var(--radius-stamp);
+  }
+
+  .clamp-12 {
+    display: -webkit-box;
+    -webkit-line-clamp: 12;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .button-assistant {
+    background: var(--color-graphite);
+    color: var(--color-sheet);
+  }
+
   .keycap {
     font-family: var(--font-mono);
     font-size: var(--text-meta);

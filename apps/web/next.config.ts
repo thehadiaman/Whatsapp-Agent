@@ -29,6 +29,9 @@ const config: NextConfig = {
   outputFileTracingRoot: fileURLToPath(new URL('../../', import.meta.url)),
   poweredByHeader: false,
   reactStrictMode: true,
+  // Socket.IO requests /api/socket.io/?EIO=…; the default 308 that strips the
+  // trailing slash sends it to a path the API does not serve.
+  skipTrailingSlashRedirect: true,
   rewrites() {
     return Promise.resolve([
       { source: '/api/:path*', destination: `${apiInternalUrl}/api/:path*` },
