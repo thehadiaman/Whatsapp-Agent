@@ -4,6 +4,7 @@ import {
   MediaController,
   MessagesController,
 } from '../inbox/conversations.controller.js';
+import { InboxGateway } from '../inbox/inbox.gateway.js';
 import { TenancyModule } from '../tenancy/tenancy.module.js';
 import { WhatsAppWebhookController } from './webhook.controller.js';
 
@@ -15,5 +16,6 @@ import { WhatsAppWebhookController } from './webhook.controller.js';
     MessagesController,
     MediaController,
   ],
+  providers: [InboxGateway],
 })
 export class WhatsAppModule {}

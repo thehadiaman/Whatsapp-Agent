@@ -133,3 +133,12 @@ export type NoteBody = z.infer<typeof noteBodySchema>;
 
 export const assignBodySchema = z.strictObject({ userId: z.uuid() });
 export type AssignBody = z.infer<typeof assignBodySchema>;
+
+// --- live updates -------------------------------------------------------------------
+
+/** Socket.IO path, under /api so the same proxy rule covers it. */
+export const INBOX_SOCKET_PATH = '/api/socket.io';
+/** The only event the inbox socket sends: refetch this conversation. */
+export const INBOX_EVENT = 'conversation.changed';
+export const inboxEventSchema = z.object({ conversationId: z.uuid() });
+export type InboxEvent = z.infer<typeof inboxEventSchema>;
