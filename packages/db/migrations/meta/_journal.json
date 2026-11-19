@@ -15,6 +15,20 @@
       "when": 1794895590477,
       "tag": "0001_row_level_security",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794898141618,
+      "tag": "0002_whatsapp_pipeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794898142234,
+      "tag": "0003_pipeline_security",
+      "breakpoints": true
     }
   ]
 }
