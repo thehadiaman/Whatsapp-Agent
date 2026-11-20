@@ -19,7 +19,7 @@ export const DEMO_BUSINESSES = [
     name: 'Qamar Phone Corner',
     timezone: 'Asia/Dubai',
     // Spoken languages (voice notes are transcribed as one of these) and voice replies.
-    languages: ['en', 'ar', 'hi'],
+    languages: ['en', 'ar', 'hi', 'ml'],
     voiceReplies: true,
     // Simulator number; Meta phone number IDs are numeric strings like this.
     channel: { phoneNumberId: '100000000000001', displayPhoneNumber: '+971 4 555 0101' },
