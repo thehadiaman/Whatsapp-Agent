@@ -14,7 +14,7 @@
     "db:provision": "pnpm build:packages && pnpm --filter @app/db run provision",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "pnpm build:packages && eslint . --max-warnings 0",
+    "lint": "pnpm build:packages && NODE_OPTIONS=--max-old-space-size=4096 eslint . --max-warnings 0",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r test && scripts/commit-msg-check.test.sh",
     "test:int": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test:int"
