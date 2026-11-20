@@ -15,12 +15,15 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
 
   const { user, membership } = me.data;
   const sections = membership
-    ? [{ href: '/inbox', label: 'Inbox' }]
+    ? [
+        { href: '/inbox', label: 'Inbox' },
+        { href: '/knowledge', label: 'Knowledge' },
+      ]
     : [{ href: '/admin', label: 'Businesses' }];
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="flex h-12 items-center gap-6 border-b border-rule bg-sheet px-4">
+      <header className="flex h-12 items-center gap-3 border-b border-rule bg-sheet px-4 md:gap-6">
         {/* 20px: the condensed display face blurs at smaller sizes on 1x screens. */}
         <span className="display truncate text-pane">
           {membership?.tenantName ?? 'Platform admin'}
