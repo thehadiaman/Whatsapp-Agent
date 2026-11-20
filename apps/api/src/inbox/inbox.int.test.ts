@@ -41,7 +41,6 @@ async function withChannel<T extends TestTenant>(tenant: T): Promise<T & { chann
       provider: 'simulator',
       phoneNumberId: `1${digits(14)}`,
       displayPhoneNumber: '+971 4 000 0000',
-      reopenTemplateName: 'reopen_conversation',
     })
     .returning();
   return { ...tenant, channelId: channel!.id };
@@ -137,6 +136,10 @@ beforeAll(async () => {
     .insert(schema.memberships)
     .values({ tenantId: base.id, userId: agent2, role: 'agent' });
   a = { ...(await withChannel(base)), agent2Email };
+  await db.db
+    .update(schema.tenants)
+    .set({ reopenTemplates: { en: 'reopen_conversation', ar: 'reopen_conversation_ar' } })
+    .where(eq(schema.tenants.id, base.id));
   b = await withChannel(await createTestTenant(db, 'ib'));
 
   api = await startApi(testConfig({ MEDIA_STORAGE_DIR: storageDir }));
@@ -287,6 +290,14 @@ describe('replies', () => {
       (await post(`/api/conversations/${id}/replies`, cookies['agentA']!, { template: 'reopen' }))
         .status,
     ).toBe(202);
+    // The customer wrote in Arabic, so the Arabic template goes (P-05).
+    const template = (
+      await db.db.select().from(schema.messages).where(eq(schema.messages.conversationId, id))
+    ).find((m) => m.kind === 'template');
+    expect(template).toMatchObject({
+      templateName: 'reopen_conversation_ar',
+      templateLanguage: 'ar',
+    });
   });
 
   it('a failed reply can be sent again by the holder, and only a failed one', async () => {

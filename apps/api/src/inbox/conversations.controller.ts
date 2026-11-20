@@ -49,7 +49,7 @@ import { currentRequest } from '../common/request-context.js';
 import { ZodBody } from '../common/zod-body.pipe.js';
 import { EVENTS, QUEUES, STORAGE } from '../infra/tokens.js';
 import { TenantDb } from '../tenancy/tenant-db.service.js';
-import { conversationDetail, listConversations } from './inbox.queries.js';
+import { conversationDetail, listConversations, reopenTemplateFor } from './inbox.queries.js';
 
 function toHttp(error: unknown): never {
   if (error instanceof NotFoundError) throw new NotFoundException(error.message);
@@ -328,18 +328,13 @@ export class ConversationsController {
         } else if ('text' in body) {
           content = { kind: 'text', body: body.text };
         } else {
-          const [channel] = await tx
-            .select({ template: schema.channels.reopenTemplateName })
-            .from(schema.conversations)
-            .innerJoin(schema.channels, eq(schema.channels.id, schema.conversations.channelId))
-            .where(eq(schema.conversations.id, id));
-          if (!channel) throw new NotFoundError();
-          if (!channel.template) {
+          const template = await reopenTemplateFor(tx, id);
+          if (!template) {
             throw new OwnershipError(
-              'This number has no approved reopen template. Add one in settings first.',
+              'This business has no approved reopen template. An owner can add one in settings.',
             );
           }
-          content = { kind: 'template', name: channel.template, languageCode: 'en' };
+          content = { kind: 'template', name: template.name, languageCode: template.language };
         }
         return queueReply(tx, {
           conversationId: id,

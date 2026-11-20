@@ -140,7 +140,8 @@ export const conversationDetailSchema = z.object({
   customer: customerSummarySchema.extend({ firstSeenAt: z.iso.datetime({ offset: true }) }),
   channel: z.object({
     displayPhoneNumber: z.string(),
-    reopenTemplateName: z.string().nullable(),
+    /** The approved template that reopens the window, in the customer's language if there is one. */
+    reopenTemplate: z.object({ name: z.string(), language: z.string() }).nullable(),
   }),
   windowClosesAt: z.iso.datetime({ offset: true }).nullable(),
   /** The business sends voice replies (tenant setting); the composer offers one. */

@@ -115,6 +115,7 @@ export async function queueReply(
       // A voice reply keeps its text (brief §4): it is what the inbox shows.
       body: content.kind === 'template' ? null : content.body,
       templateName: content.kind === 'template' ? content.name : null,
+      templateLanguage: content.kind === 'template' ? content.languageCode : null,
       speech,
       status: 'queued',
       statusAt: input.now,
@@ -245,7 +246,11 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
       : { phone: customer.waId ?? '' };
     const content: OutboundContent =
       message.kind === 'template'
-        ? { kind: 'template', name: message.templateName ?? '', languageCode: 'en' }
+        ? {
+            kind: 'template',
+            name: message.templateName ?? '',
+            languageCode: message.templateLanguage ?? 'en',
+          }
         : { kind: 'text', body: message.body ?? '' };
     return {
       kind: 'send',

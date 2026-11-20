@@ -16,6 +16,7 @@ export interface SeedTenant {
   /** Set when the tenant is created only: afterwards they are the owner's settings. */
   languages?: string[];
   voiceReplies?: boolean;
+  settings?: Partial<typeof schema.tenants.$inferInsert> | undefined;
   members: (SeedUser & { role: TenantRole })[];
   /** A WhatsApp number on the simulator (provider `simulator`). */
   channel?: { phoneNumberId: string; displayPhoneNumber: string };
@@ -65,6 +66,7 @@ export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<st
       timezone: tenant.timezone,
       ...(tenant.languages ? { languages: tenant.languages } : {}),
       ...(tenant.voiceReplies === undefined ? {} : { voiceReplies: tenant.voiceReplies }),
+      ...tenant.settings,
     })
     .onConflictDoUpdate({
       target: schema.tenants.slug,
@@ -81,7 +83,6 @@ export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<st
         provider: 'simulator',
         phoneNumberId: tenant.channel.phoneNumberId,
         displayPhoneNumber: tenant.channel.displayPhoneNumber,
-        reopenTemplateName: 'reopen_conversation',
       })
       .onConflictDoNothing();
   }
@@ -99,6 +100,46 @@ export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<st
   return row.id;
 }
 
+const open = (from: string, to: string) => ({ open: from, close: to });
+
+/** Each demo business's settings when it is created (owners change them after). */
+const DEMO_SETTINGS: Record<string, Partial<typeof schema.tenants.$inferInsert>> = {
+  // Karama, Dubai: open every day; Friday opens after the midday prayer.
+  'qamar-phone-corner': {
+    openingHours: {
+      mon: open('10:00', '22:00'),
+      tue: open('10:00', '22:00'),
+      wed: open('10:00', '22:00'),
+      thu: open('10:00', '22:00'),
+      fri: open('14:00', '22:00'),
+      sat: open('10:00', '22:00'),
+      sun: open('12:00', '22:00'),
+    },
+    assistantTone: 'warm',
+    escalationKeywords: ['refund', 'complaint', 'police', 'استرداد', 'शिकायत'],
+    reopenTemplates: {
+      en: 'reopen_conversation',
+      ar: 'reopen_conversation_ar',
+      hi: 'reopen_conversation_hi',
+    },
+  },
+  // Kochi: a home bakery, closed on Sundays.
+  'kayal-bakes': {
+    openingHours: {
+      mon: open('09:00', '20:00'),
+      tue: open('09:00', '20:00'),
+      wed: open('09:00', '20:00'),
+      thu: open('09:00', '20:00'),
+      fri: open('09:00', '20:00'),
+      sat: open('09:00', '20:00'),
+      sun: null,
+    },
+    assistantTone: 'warm',
+    escalationKeywords: ['refund', 'complaint', 'allergy', 'പരാതി'],
+    reopenTemplates: { en: 'reopen_conversation', ml: 'reopen_conversation_ml' },
+  },
+};
+
 /** The demo businesses from @app/shared, with a password for every member. */
 export function demoTenants(password: string): SeedTenant[] {
   return DEMO_BUSINESSES.map((business) => ({
@@ -107,6 +148,7 @@ export function demoTenants(password: string): SeedTenant[] {
     timezone: business.timezone,
     languages: [...business.languages],
     voiceReplies: business.voiceReplies,
+    settings: DEMO_SETTINGS[business.slug],
     channel: business.channel,
     members: business.staff.map((person) => ({ ...person, password })),
   }));

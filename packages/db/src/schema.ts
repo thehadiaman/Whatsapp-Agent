@@ -1,3 +1,4 @@
+import type { OpeningHours } from '@app/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -96,6 +97,9 @@ export const verifications = pgTable('verifications', {
 
 export const tenantRole = pgEnum('tenant_role', ['owner', 'agent']);
 
+/** How the assistant writes (system prompt). */
+export const assistantTone = pgEnum('assistant_tone', ['warm', 'brief', 'formal']);
+
 export const tenants = pgTable(
   'tenants',
   {
@@ -120,10 +124,31 @@ export const tenants = pgTable(
       .default(sql`'{en}'::text[]`),
     /** Answer a voice note with a voice note, where Polly has a voice for the language. */
     voiceReplies: boolean('voice_replies').notNull().default(false),
+    /** Weekly opening hours in the tenant's time zone; null until the owner sets them. */
+    openingHours: jsonb('opening_hours').$type<OpeningHours>(),
+    assistantTone: assistantTone('assistant_tone').notNull().default('warm'),
+    /** Words that always send a conversation to a person, in any language the owner writes. */
+    escalationKeywords: text('escalation_keywords')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Assistant replies allowed in one conversation before a person takes it; null for no limit. */
+    maxAssistantReplies: integer('max_assistant_replies'),
+    /** On handover outside opening hours, tell the customer when a person will reply. */
+    outsideHoursNotice: boolean('outside_hours_notice').notNull().default(true),
+    /** Approved "reopen conversation" template name per language (P-05). */
+    reopenTemplates: jsonb('reopen_templates')
+      .$type<Partial<Record<string, string>>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
+    check(
+      'tenants_max_assistant_replies_range',
+      sql`${t.maxAssistantReplies} is null or ${t.maxAssistantReplies} between 1 and 50`,
+    ),
     check(
       'tenants_languages_known',
       sql`cardinality(${t.languages}) between 1 and 4 and ${t.languages} <@ array['en', 'hi', 'ml', 'ar']::text[]`,
@@ -190,8 +215,6 @@ export const channels = pgTable(
     provider: channelProvider('provider').notNull(),
     phoneNumberId: text('phone_number_id').notNull(),
     displayPhoneNumber: text('display_phone_number').notNull(),
-    /** Approved template used to reopen a conversation after the 24-hour window. */
-    reopenTemplateName: text('reopen_template_name'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -265,6 +288,8 @@ export const conversations = pgTable(
       .on(t.channelId, t.customerId)
       .where(sql`${t.state} <> 'closed'`),
     index('conversations_tenant_last_message_idx').on(t.tenantId, t.lastMessageAt),
+    // Analytics count conversations by when they started.
+    index('conversations_tenant_created_idx').on(t.tenantId, t.createdAt),
     unique('conversations_tenant_number_unique').on(t.tenantId, t.number),
   ],
 );
@@ -405,6 +430,8 @@ export const messages = pgTable(
     /** Outbound replies asked to be spoken: which voice, or why they went as text. */
     speech: jsonb('speech').$type<StoredSpeech>(),
     templateName: text('template_name'),
+    /** WhatsApp template language code (`en`, `ar`, `hi`, `ml`). */
+    templateLanguage: text('template_language'),
     status: messageStatus('status').notNull(),
     statusAt: timestamp('status_at', { withTimezone: true }).notNull().defaultNow(),
     error: jsonb('error').$type<StoredError>(),
@@ -660,6 +687,8 @@ export const assistantTurns = pgTable(
     toolCalls: jsonb('tool_calls').$type<TurnToolCall[]>().notNull().default([]),
     /** Why a guard stopped the reply, or what failed. Never message text. */
     detail: text('detail'),
+    /** Why the conversation went to a person, as a code for analytics; null if it did not. */
+    handoffReason: text('handoff_reason'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -684,4 +713,47 @@ export const assistantUsageDaily = pgTable(
     turns: integer('turns').notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.tenantId, t.day] })],
+);
+
+// ---------------------------------------------------------------------------
+// Staff accounts without email (P-03): an owner hands over a link.
+// Tokens are stored as SHA-256 hashes; the link carries the token itself.
+// ---------------------------------------------------------------------------
+
+export const staffInvites = pgTable(
+  'staff_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    role: tenantRole('role').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('staff_invites_tenant_idx').on(t.tenantId)],
+);
+
+export const passwordResets = pgTable(
+  'password_resets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('password_resets_tenant_idx').on(t.tenantId)],
 );

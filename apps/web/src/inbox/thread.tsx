@@ -534,10 +534,13 @@ export function Thread({
               <button
                 type="button"
                 className="button button-person"
-                disabled={busy || !detail.channel.reopenTemplateName}
+                disabled={busy || !detail.channel.reopenTemplate}
                 onClick={actions.sendTemplate}
               >
-                Send template “{detail.channel.reopenTemplateName ?? 'none set'}”
+                Send template “{detail.channel.reopenTemplate?.name ?? 'none set'}”
+                {detail.channel.reopenTemplate ? (
+                  <span className="mono text-meta">{detail.channel.reopenTemplate.language}</span>
+                ) : null}
               </button>
               <button
                 type="button"

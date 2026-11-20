@@ -7,7 +7,9 @@ import type {
   TimelineEntry,
   TimelineMessage,
 } from '@app/shared';
-import { asc, eq, sql } from 'drizzle-orm';
+import { detectLanguage } from '@app/assistant';
+import { spokenLanguageOf } from '@app/voice';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 /**
  * Read models for the inbox. Always called inside TenantDb.run(), so row-level
@@ -27,6 +29,42 @@ function transcriptView(t: StoredTranscript | null): TimelineMessage['transcript
     return { status: 'done', text: t.text, language: t.language, engine: t.engine };
   }
   return t;
+}
+
+/**
+ * The approved reopen template to send (P-05): the one in the customer's
+ * language, judged from their latest message, else English, else any.
+ */
+export async function reopenTemplateFor(
+  tx: Transaction,
+  conversationId: string,
+): Promise<{ name: string; language: string } | null> {
+  const [tenant] = await tx
+    .select({ templates: schema.tenants.reopenTemplates })
+    .from(schema.tenants);
+  const templates = Object.entries(tenant?.templates ?? {}).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '',
+  );
+  if (templates.length === 0) return null;
+  const [latest] = await tx
+    .select({ body: schema.messages.body, transcript: schema.messages.transcript })
+    .from(schema.messages)
+    .where(
+      and(
+        eq(schema.messages.conversationId, conversationId),
+        eq(schema.messages.direction, 'inbound'),
+      ),
+    )
+    .orderBy(desc(schema.messages.createdAt))
+    .limit(1);
+  const words =
+    latest?.transcript?.status === 'done' ? latest.transcript.text : (latest?.body ?? '');
+  const wanted = words ? spokenLanguageOf(detectLanguage(words)) : null;
+  const pick =
+    templates.find(([language]) => language === wanted) ??
+    templates.find(([language]) => language === 'en') ??
+    templates[0];
+  return pick ? { name: pick[1], language: pick[0] } : null;
 }
 
 /** One line of text for the queue, whatever the message kind. */
@@ -238,7 +276,7 @@ export async function conversationDetail(
     },
     channel: {
       displayPhoneNumber: row.channel.displayPhoneNumber,
-      reopenTemplateName: row.channel.reopenTemplateName,
+      reopenTemplate: await reopenTemplateFor(tx, c.id),
     },
     windowClosesAt: windowClosesAt(c.lastInboundAt),
     voiceReplies: row.voiceReplies,
