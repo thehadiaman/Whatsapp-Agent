@@ -8,6 +8,7 @@ import { createAuth } from './auth/auth.js';
 import { API_CONFIG, type ApiConfig } from './config.js';
 import { HealthModule } from './health/health.module.js';
 import { InfraModule } from './infra/infra.module.js';
+import { KnowledgeModule } from './knowledge/knowledge.module.js';
 import { AUTH, DB, LOGGER } from './infra/tokens.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
 import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
@@ -19,7 +20,7 @@ export class AppModule {
     return {
       module: AppModule,
       global: true,
-      imports: [InfraModule, HealthModule, TenancyModule, WhatsAppModule],
+      imports: [InfraModule, HealthModule, TenancyModule, WhatsAppModule, KnowledgeModule],
       providers: [
         { provide: API_CONFIG, useValue: config },
         { provide: LOGGER, useValue: logger },

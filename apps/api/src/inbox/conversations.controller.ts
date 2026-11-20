@@ -20,6 +20,7 @@ import {
   type ConversationListItem,
   type NoteBody,
   type ReplyBody,
+  type TurnExplanation,
 } from '@app/shared';
 import {
   Body,
@@ -92,6 +93,44 @@ export class ConversationsController {
     const detail = await this.tenantDb.run(member, (tx) => conversationDetail(tx, id));
     if (!detail) throw new NotFoundException('Conversation not found.');
     return detail;
+  }
+
+  /** "Explain this reply": what the assistant read, called and spent for one reply. */
+  @Get(':id/turns/:turnId')
+  async explanation(
+    @CurrentMember() member: MemberPrincipal,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('turnId', new ParseUUIDPipe()) turnId: string,
+  ): Promise<TurnExplanation> {
+    const t = schema.assistantTurns;
+    const [turn] = await this.tenantDb.run(member, (tx) =>
+      tx
+        .select()
+        .from(t)
+        .where(and(eq(t.id, turnId), eq(t.conversationId, id))),
+    );
+    if (!turn) throw new NotFoundException('There is no record for this reply.');
+    return {
+      turnId: turn.id,
+      model: turn.model,
+      outcome: turn.outcome,
+      basis: turn.basis,
+      language: turn.language,
+      passages: turn.passages.map((p) => ({
+        sourceId: p.sourceId,
+        sourceTitle: p.sourceTitle,
+        heading: p.heading,
+        score: p.score,
+      })),
+      toolCalls: turn.toolCalls,
+      inputTokens: turn.inputTokens,
+      outputTokens: turn.outputTokens,
+      costMicros: turn.costMicros,
+      latencyMs: turn.latencyMs,
+      modelCalls: turn.modelCalls,
+      detail: turn.detail,
+      createdAt: turn.createdAt.toISOString(),
+    };
   }
 
   @Post(':id/take-over')

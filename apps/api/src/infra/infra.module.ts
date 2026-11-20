@@ -1,10 +1,12 @@
 import { createDb, type DbHandle } from '@app/db';
 import {
+  assistantDeps,
   createQueues,
   LocalDiskStorage,
   pipelineSettings,
   ProviderRegistry,
   RedisEventPublisher,
+  type AssistantDeps,
   type EventPublisher,
   type ObjectStorage,
   type Queues,
@@ -13,7 +15,17 @@ import type { Logger } from '@app/shared';
 import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { API_CONFIG, type ApiConfig } from '../config.js';
-import { DB, EVENTS, LOGGER, PLATFORM_DB, PROVIDERS, QUEUES, REDIS, STORAGE } from './tokens.js';
+import {
+  ASSISTANT,
+  DB,
+  EVENTS,
+  LOGGER,
+  PLATFORM_DB,
+  PROVIDERS,
+  QUEUES,
+  REDIS,
+  STORAGE,
+} from './tokens.js';
 
 function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
   // An idle client erroring (e.g. Postgres restarted) must not crash the process.
@@ -83,8 +95,14 @@ function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
       useFactory: (config: ApiConfig): ObjectStorage =>
         new LocalDiskStorage(config.MEDIA_STORAGE_DIR),
     },
+    {
+      provide: ASSISTANT,
+      inject: [API_CONFIG],
+      // The API embeds questions for "Try a question"; the worker runs the turns.
+      useFactory: (config: ApiConfig): AssistantDeps => assistantDeps(config),
+    },
   ],
-  exports: [DB, PLATFORM_DB, REDIS, QUEUES, PROVIDERS, EVENTS, STORAGE],
+  exports: [DB, PLATFORM_DB, REDIS, QUEUES, PROVIDERS, EVENTS, STORAGE, ASSISTANT],
 })
 export class InfraModule implements OnApplicationShutdown {
   constructor(

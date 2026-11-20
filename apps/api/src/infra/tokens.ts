@@ -8,3 +8,4 @@ export const QUEUES = Symbol('QUEUES');
 export const PROVIDERS = Symbol('PROVIDERS');
 export const EVENTS = Symbol('EVENTS');
 export const STORAGE = Symbol('STORAGE');
+export const ASSISTANT = Symbol('ASSISTANT');

@@ -73,6 +73,8 @@ export const timelineMessageSchema = z.object({
     .nullable(),
   status: messageStatusSchema,
   error: z.object({ code: z.number().nullable(), message: z.string() }).nullable(),
+  /** The assistant turn that wrote this reply; its receipt is "Explain this reply". */
+  turnId: z.uuid().nullable(),
 });
 export type TimelineMessage = z.infer<typeof timelineMessageSchema>;
 

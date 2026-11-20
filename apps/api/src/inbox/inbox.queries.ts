@@ -125,9 +125,14 @@ export async function conversationDetail(
   // Sequential on purpose: one transaction is one connection, which runs one
   // query at a time (pg 9 rejects overlapping queries on a client).
   const messages = await tx
-    .select({ message: schema.messages, senderName: schema.users.name })
+    .select({
+      message: schema.messages,
+      senderName: schema.users.name,
+      turnId: schema.assistantTurns.id,
+    })
     .from(schema.messages)
     .leftJoin(schema.users, eq(schema.users.id, schema.messages.senderUserId))
+    .leftJoin(schema.assistantTurns, eq(schema.assistantTurns.replyMessageId, schema.messages.id))
     .where(eq(schema.messages.conversationId, conversationId))
     .orderBy(asc(schema.messages.createdAt));
   const transitions = await tx
@@ -142,7 +147,7 @@ export async function conversationDetail(
     .where(eq(schema.conversationNotes.conversationId, conversationId));
 
   const timeline: TimelineEntry[] = [
-    ...messages.map(({ message: m, senderName }): TimelineEntry => ({
+    ...messages.map(({ message: m, senderName, turnId }): TimelineEntry => ({
       type: 'message',
       id: m.id,
       // Inbound: when the customer sent it. Outbound: when it was written here.
@@ -164,6 +169,7 @@ export async function conversationDetail(
         : null,
       status: m.status,
       error: m.error,
+      turnId,
     })),
     ...transitions.map(({ transition: t, actorName }): TimelineEntry => ({
       type: 'transition',
