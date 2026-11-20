@@ -3,9 +3,12 @@ import {
   bigint,
   boolean,
   check,
+  customType,
+  date,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -14,6 +17,7 @@ import {
   unique,
   uniqueIndex,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
@@ -99,6 +103,12 @@ export const tenants = pgTable('tenants', {
   timezone: text('timezone').notNull(),
   /** Counter for conversations.number; taken under the tenant row's lock. */
   nextConversationNumber: integer('next_conversation_number').notNull().default(1),
+  /** What the business sells and where, in the owner's words. Defines "on topic" for the assistant. */
+  assistantSummary: text('assistant_summary').notNull().default(''),
+  /** Model tokens (in + out) the assistant may use per local day; then it hands over. */
+  assistantDailyTokenBudget: integer('assistant_daily_token_budget').notNull().default(300_000),
+  /** Assistant turns per customer per hour; more is treated as spam and goes to a person. */
+  assistantTurnsPerCustomerHour: integer('assistant_turns_per_customer_hour').notNull().default(20),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -415,3 +425,213 @@ export const deadLetters = pgTable('dead_letters', {
   attempts: integer('attempts').notNull(),
   failedAt: timestamp('failed_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Knowledge base and assistant (phase 4)
+// ---------------------------------------------------------------------------
+
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
+
+export const knowledgeSourceKind = pgEnum('knowledge_source_kind', ['faq', 'file', 'catalogue']);
+export const knowledgeSourceStatus = pgEnum('knowledge_source_status', [
+  'queued',
+  'reading',
+  'ready',
+  'failed',
+]);
+
+/** One thing the owner added: an FAQ entry, an uploaded document, or a product catalogue. */
+export const knowledgeSources = pgTable(
+  'knowledge_sources',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    kind: knowledgeSourceKind('kind').notNull(),
+    /** File name, or the FAQ question. */
+    title: text('title').notNull(),
+    /** FAQ only. */
+    answer: text('answer'),
+    contentType: text('content_type'),
+    sizeBytes: integer('size_bytes'),
+    /** Files only: `tenants/{tenantId}/knowledge/{sourceId}`. */
+    storageKey: text('storage_key'),
+    status: knowledgeSourceStatus('status').notNull().default('queued'),
+    /** Why reading failed and what to do, in words the owner can act on. */
+    error: text('error'),
+    passageCount: integer('passage_count').notNull().default(0),
+    /** Pages or rows; shown as "6 pages" or "212 products". */
+    unitCount: integer('unit_count'),
+    /** Bumped on every edit or re-upload; passages carry the version they came from. */
+    version: integer('version').notNull().default(1),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('knowledge_sources_tenant_idx').on(t.tenantId, t.createdAt)],
+);
+
+/**
+ * Retrievable passages. Exact nearest-neighbour search (no ANN index): a
+ * business has hundreds to a few thousand passages, which Postgres scans in
+ * milliseconds, and an approximate index would filter out tenants' rows after
+ * the search and return too few (D-062).
+ */
+export const knowledgePassages = pgTable(
+  'knowledge_passages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => knowledgeSources.id, { onDelete: 'cascade' }),
+    ordinal: integer('ordinal').notNull(),
+    heading: text('heading'),
+    text: text('text').notNull(),
+    embedding: vector('embedding', { dimensions: 1024 }).notNull(),
+    embeddingModel: text('embedding_model').notNull(),
+    /** Keyword half of hybrid search: product names, order numbers, words in any script. */
+    search: tsvector('search')
+      .notNull()
+      .generatedAlwaysAs(sql`to_tsvector('simple', coalesce(heading, '') || ' ' || text)`),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('knowledge_passages_tenant_idx').on(t.tenantId),
+    unique('knowledge_passages_source_ordinal_unique').on(t.sourceId, t.ordinal),
+    index('knowledge_passages_search_idx').using('gin', t.search),
+  ],
+);
+
+export const orderStatus = pgEnum('order_status', [
+  'received',
+  'preparing',
+  'ready',
+  'shipped',
+  'delivered',
+  'cancelled',
+]);
+
+export interface OrderItem {
+  name: string;
+  quantity: number;
+}
+
+/** Orders as the business's own system knows them; `lookup_order` reads these. */
+export const orders = pgTable(
+  'orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    /** Who placed it. The assistant shows an order only to this customer. */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    orderNumber: text('order_number').notNull(),
+    status: orderStatus('status').notNull(),
+    items: jsonb('items').$type<OrderItem[]>().notNull().default([]),
+    total: numeric('total', { precision: 12, scale: 2 }),
+    currency: text('currency'),
+    courier: text('courier'),
+    trackingNumber: text('tracking_number'),
+    /** Null means no date was promised; the assistant must then say so, not guess. */
+    promisedDate: date('promised_date'),
+    placedAt: timestamp('placed_at', { withTimezone: true }).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique('orders_tenant_number_unique').on(t.tenantId, t.orderNumber)],
+);
+
+export const assistantOutcome = pgEnum('assistant_outcome', [
+  'replied',
+  'handed_off',
+  'declined',
+  'guard_blocked',
+  'budget_exhausted',
+  'rate_limited',
+  'skipped',
+  'failed',
+]);
+
+export interface TurnPassage {
+  passageId: string;
+  sourceId: string;
+  sourceTitle: string;
+  heading: string | null;
+  score: number;
+}
+
+export interface TurnToolCall {
+  name: string;
+  input: unknown;
+  result: unknown;
+}
+
+/** One assistant turn: what it read, what it called, what it cost (brief §4, "Explain this reply"). */
+export const assistantTurns = pgTable(
+  'assistant_turns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    /** The newest customer message this turn answered. One turn per message, so a retry is a no-op. */
+    triggerMessageId: uuid('trigger_message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    replyMessageId: uuid('reply_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    model: text('model').notNull(),
+    outcome: assistantOutcome('outcome').notNull(),
+    /** knowledge, order, none or declined, as the model reported it. */
+    basis: text('basis'),
+    language: text('language'),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    costMicros: bigint('cost_micros', { mode: 'number' }).notNull().default(0),
+    latencyMs: integer('latency_ms').notNull().default(0),
+    modelCalls: integer('model_calls').notNull().default(0),
+    passages: jsonb('passages').$type<TurnPassage[]>().notNull().default([]),
+    toolCalls: jsonb('tool_calls').$type<TurnToolCall[]>().notNull().default([]),
+    /** Why a guard stopped the reply, or what failed. Never message text. */
+    detail: text('detail'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('assistant_turns_trigger_unique').on(t.triggerMessageId),
+    index('assistant_turns_tenant_created_idx').on(t.tenantId, t.createdAt),
+    index('assistant_turns_customer_created_idx').on(t.customerId, t.createdAt),
+    index('assistant_turns_reply_idx').on(t.replyMessageId),
+  ],
+);
+
+/** Tokens and cost per business per local day; the daily budget is checked against it. */
+export const assistantUsageDaily = pgTable(
+  'assistant_usage_daily',
+  {
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    day: date('day').notNull(),
+    inputTokens: bigint('input_tokens', { mode: 'number' }).notNull().default(0),
+    outputTokens: bigint('output_tokens', { mode: 'number' }).notNull().default(0),
+    costMicros: bigint('cost_micros', { mode: 'number' }).notNull().default(0),
+    turns: integer('turns').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.tenantId, t.day] })],
+);

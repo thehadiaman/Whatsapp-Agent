@@ -68,6 +68,18 @@ export async function bootstrapRoles(urls: DatabaseUrls): Promise<void> {
   } finally {
     await client.end();
   }
+
+  // pgvector is not a trusted extension, so only a superuser can create it,
+  // and it must exist in the application database before migrations run.
+  const appDb = new pg.Client({
+    connectionString: withDatabase(urls.superuser, migrator.database),
+  });
+  await appDb.connect();
+  try {
+    await appDb.query('CREATE EXTENSION IF NOT EXISTS vector');
+  } finally {
+    await appDb.end();
+  }
 }
 
 /** Applies pending migrations as app_migrator. */

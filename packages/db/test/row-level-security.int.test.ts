@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, withTenant, type DbHandle } from '../src/client.js';
-import { auditLog, memberships, tenants, users } from '../src/schema.js';
+import { assistantTurns, auditLog, memberships, orders, tenants, users } from '../src/schema.js';
 import { testDatabaseUrls } from '../src/testing.js';
 
 // Tenant data is created as app_migrator (which bypasses RLS, like a seed).
@@ -206,6 +206,51 @@ describe('privileges', () => {
       withTenant(app.db, tenantA, (tx) => tx.update(auditLog).set({ action: 'edited' })),
       INSUFFICIENT_PRIVILEGE,
       PERMISSION_DENIED,
+    );
+  });
+
+  it('app_user can read orders but not create or change them', async () => {
+    await migrator.db.insert(orders).values({
+      tenantId: tenantA,
+      orderNumber: `T-${tenantA.slice(0, 6)}`,
+      status: 'shipped',
+      placedAt: new Date(),
+    });
+    const visible = await withTenant(app.db, tenantA, (tx) => tx.select().from(orders));
+    expect(visible).toHaveLength(1);
+    await expectPgError(
+      withTenant(app.db, tenantA, (tx) => tx.update(orders).set({ status: 'delivered' })),
+      INSUFFICIENT_PRIVILEGE,
+      PERMISSION_DENIED,
+    );
+    await expectPgError(
+      withTenant(app.db, tenantA, (tx) =>
+        tx.insert(orders).values({
+          tenantId: tenantA,
+          orderNumber: 'FAKE-1',
+          status: 'delivered',
+          placedAt: new Date(),
+        }),
+      ),
+      INSUFFICIENT_PRIVILEGE,
+      PERMISSION_DENIED,
+    );
+  });
+
+  it('app_user cannot rewrite or delete an assistant turn, only link its reply', async () => {
+    await expectPgError(
+      withTenant(app.db, tenantA, (tx) => tx.update(assistantTurns).set({ costMicros: 0 })),
+      INSUFFICIENT_PRIVILEGE,
+      PERMISSION_DENIED,
+    );
+    await expectPgError(
+      withTenant(app.db, tenantA, (tx) => tx.delete(assistantTurns)),
+      INSUFFICIENT_PRIVILEGE,
+      PERMISSION_DENIED,
+    );
+    // Linking the reply is the one permitted update (no rows here, so none change).
+    await withTenant(app.db, tenantA, (tx) =>
+      tx.update(assistantTurns).set({ replyMessageId: null }),
     );
   });
 
