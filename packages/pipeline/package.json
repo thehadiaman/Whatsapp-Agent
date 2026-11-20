@@ -17,11 +17,13 @@
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit",
-    "test:int": "vitest run --project integration"
+    "test:int": "vitest run --project integration",
+    "contract:live": "LIVE_CONTRACT=1 vitest run --project unit src/contract.test.ts"
   },
   "dependencies": {
     "@app/assistant": "workspace:*",
     "@app/db": "workspace:*",
+    "@app/live": "workspace:*",
     "@app/shared": "workspace:*",
     "@app/voice": "workspace:*",
     "@app/whatsapp": "workspace:*",
