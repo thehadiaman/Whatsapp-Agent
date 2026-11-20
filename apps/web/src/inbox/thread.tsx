@@ -8,7 +8,7 @@ import type {
   TimelineMessage,
 } from '@app/shared';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import {
   custodyAlongTimeline,
   displayName,
@@ -18,6 +18,7 @@ import {
   tokenNumber,
   windowText,
 } from './custody';
+import { VoicePlayer } from './voice-player';
 
 export interface ThreadActions {
   takeOver: () => void;
@@ -98,12 +99,6 @@ const FALLBACK_TEXT: Record<string, (language: string) => string> = {
   synthesis_failed: () => 'the voice could not be made',
 };
 
-function duration(ms: number | null): string {
-  if (ms === null) return '';
-  const seconds = Math.max(1, Math.round(ms / 1000));
-  return ` · ${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
 /** A voice note: the player, with what was said beside it (DESIGN.md, "Voice notes"). */
 function VoiceNote({ message }: { message: TimelineMessage }) {
   const src = `/api/media/${message.id}`;
@@ -113,12 +108,10 @@ function VoiceNote({ message }: { message: TimelineMessage }) {
   return (
     <div className="grid gap-x-3 gap-y-1 md:grid-cols-[minmax(0,15rem)_1fr]">
       {available ? (
-        <audio
-          controls
-          preload="none"
+        <VoicePlayer
           src={src}
-          className="h-9 w-full max-w-60"
-          aria-label={outbound ? 'Voice reply' : 'Voice note from the customer'}
+          durationMs={message.media?.durationMs ?? null}
+          label={outbound ? 'voice reply' : 'voice note from the customer'}
         />
       ) : (
         <p className="mono text-meta text-graphite">
@@ -138,7 +131,6 @@ function VoiceNote({ message }: { message: TimelineMessage }) {
                 : message.speech?.engine === 'mock'
                   ? ' · mock voice'
                   : ''}
-              {duration(message.speech?.durationMs ?? null)}
             </p>
           </>
         ) : t?.status === 'done' ? (
@@ -265,6 +257,17 @@ export function Thread({
   const stampClass =
     detail.state === 'human' ? (mine ? 'stamp-mine' : 'stamp-human') : `stamp-${detail.state}`;
   const lastTransition = [...detail.timeline].reverse().find((e) => e.type === 'transition');
+
+  // Open at the latest message, and follow new ones unless the reader scrolled up.
+  const timelineRef = useRef<HTMLOListElement>(null);
+  const following = useRef(true);
+  useLayoutEffect(() => {
+    following.current = true;
+  }, [detail.id]);
+  useLayoutEffect(() => {
+    const list = timelineRef.current;
+    if (list && following.current) list.scrollTop = list.scrollHeight;
+  }, [detail.id, detail.timeline.length]);
 
   // After taking over, the reply box appears: put the cursor in it.
   useEffect(() => {
@@ -410,7 +413,15 @@ export function Thread({
         ) : null}
       </header>
 
-      <ol className="min-h-0 flex-1 overflow-y-auto py-2" aria-label={`Conversation with ${name}`}>
+      <ol
+        ref={timelineRef}
+        className="min-h-0 flex-1 overflow-y-auto py-2"
+        aria-label={`Conversation with ${name}`}
+        onScroll={(event) => {
+          const list = event.currentTarget;
+          following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+        }}
+      >
         {detail.timeline.map((entry, index) => {
           const state = custody[index] ?? 'assistant';
           if (entry.type === 'transition') {
