@@ -622,9 +622,85 @@ Mock mode only, as planned: the Transcribe and Polly adapters are phase 7. Every
 - **The simulator types, it does not record:** voice notes are the bundled clip plus typed words. No microphone capture.
 - **Not checked:** Polly and Transcribe prices (phase 7, with the adapters).
 
+## Phase 6: analytics and tenant settings (2026-11-20)
+
+Approved on 2026-11-20 before building: the settings design (now in DESIGN.md), cutting order import, P-04 moving to phase 7, and P-05.
+
+### D-081 Settings: one page, each section saved and audited on its own
+
+- **Chosen:** the sections are business, opening hours, assistant (tone, daily budget, replies per customer per hour), escalation, languages and voice, WhatsApp templates and team. Each has its own save button, which sends one `PUT /api/settings/{section}` and writes one audit entry with that section before and after. "Changed 19 Nov 14:32 · Anil Kumar" comes from the audit log, so the stamp and the record cannot disagree. Agents read the page but cannot save; the team section is the owner's alone.
+- **Rejected:** one Save button for the whole page, which turns an unrelated validation error into a lost edit and makes the audit entry one large diff. Tabs were rejected because the page is read top to bottom once and then visited one section at a time.
+- **Validation:** the same shared zod schemas run in the browser before sending and in the API, so a bad time ("Monday: closing time must be after opening time") is caught before the request.
+
+### D-082 Opening hours: one span a day, in the business's time zone
+
+- **Model:** per weekday either `{open, close}` (`HH:MM`) or closed; `null` means hours not set, which counts as always open, so nothing is ever "after hours". No overnight spans in v1: a shop open past midnight sets 23:59. Recorded as a limit.
+- **Used for:** the outside-hours line on handovers (D-083), the hours given to the model as a fact (D-085), and analytics' after-hours waits (D-084).
+- **Next opening** is computed from the business's wall clock and turned back into an instant in two passes, so daylight saving changes land correctly (tested with Europe/London; the demo zones have none).
+
+### D-083 Escalation rules run before the model, deterministically
+
+- **Keywords:** if a customer message contains one of the owner's words or phrases, the conversation goes to a person and the model is not called. Matching is case-insensitive, NFKC-normalised and whole-word in any script, so "refund" matches "REFUND please" but not "refunded", and "पैसे वापस" matches inside a Hinglish sentence. Tested in English, Hindi, Arabic and Malayalam.
+- **Reply limit:** after N assistant replies a person takes over. The count restarts when a person hands the conversation back.
+- **Outside hours:** any handover while the business is closed adds a line in the customer's language: "We're closed now. A person from our team will reply when we open: Monday 10:00." The day and time are formatted with Intl for that language. The owner can turn this off.
+- **Rejected:** putting the words in the prompt for the model to act on, which can't be guaranteed or tested, and costs a model call for a decision a string match can make.
+- **Reason codes:** every handover records a code on its turn (`assistant_turns.handoff_reason`): the model's handoff reason, or `escalation_keyword`, `reply_limit`, `voice_untranscribed`, `guard_blocked`, `budget_exhausted`, `rate_limited` or `failed`.
+
+### D-084 Analytics are computed on read, with stated definitions
+
+- **Definitions:** days are the business's local days.
+  - A conversation counts on the day it started.
+  - Each conversation is exactly one of: "assistant only" (never went to a person), "waiting now", or "a person took part". The three add up to the total.
+  - Reply time: from the customer's message to the assistant's reply being sent.
+  - Cost per conversation: the model cost of its turns, divided by the number of conversations.
+  - Handover reasons: the turn codes (D-083), plus "staff took over" for take-overs straight from the assistant.
+  - Human reply time: from "waiting for a person" to the first staff message, split into waits that began while the business was open and while it was closed.
+- **Caveat:** "resolved without a person" includes conversations still open with the assistant. It means "not handed over so far", not "the customer was satisfied". The page's sentence says "without a person" for that reason.
+- **Computed on read:** five queries inside the tenant's transaction, with percentiles in TypeScript (`percentile_cont` interpolation, unit-tested). Its speed is not measured yet. **Rejected:** nightly rollup tables, a second source of truth before any measured need. The phase 8 load test will say whether one is needed.
+- **Design:** as approved: a sentence, the custody chart in the inbox's three marks, a day book and the ranked reasons. No KPI tiles.
+
+### D-085 Tone and hours reach the model as settings and facts
+
+- **Tone:** warm, brief or formal, as one line of the system prompt. The owner sees a sample reply for each. The mock model ignores tone; the prompt test checks the line, and the real model's behaviour is for the evals (phase 8).
+- **Hours:** given to the model as a fact it may quote ("Mon–Sat 10:00–22:00 · Sun closed"), escaped like any other data. They are also added to the figure guard's evidence, so "we open at 10:00" is not held back as an invented number.
+
+### D-086 Staff accounts without email (P-03 built)
+
+- **Invite:** the owner enters a name, an email (the sign-in name; nothing is sent to it) and a role, and gets a link to hand over. It works once and expires in 7 days. Opening it, the person chooses a name and a password (12+ characters, the same rule as sign-in). The account and membership are created in that business, and the invite is claimed first, so two tabs racing cannot create two accounts.
+- **Password reset:** the owner makes a link valid for 1 hour. Using it sets the password and deletes that person's sessions, signing them out everywhere.
+- **Tokens:** 256 random bits in the URL; only the SHA-256 is stored, so a database copy holds no working link. A signed-out page reads a link through one narrow `SECURITY DEFINER` function per kind (like `auth_membership`), and everything else happens inside the tenant under row-level security. Expired, used and made-up tokens all answer the same 410.
+- **Removal:** deletes the membership and sessions, closes the person's live inbox sockets (a per-user Socket.IO room), and moves conversations they held to "waiting for a person" with the reason in the ledger. An owner cannot remove themselves.
+- **Rate limits:** the public link routes are limited by client address. Behind the web proxy every request comes from one address, so in practice this is a ceiling for the whole route (20 tries a minute); brute force is already hopeless at 256 bits.
+- **Rejected:** Better Auth's own reset flow, which is built around sending email (P-03 rules out email in v1); storing tokens in clear.
+
+### D-087 Reopen templates per language (P-05 built)
+
+- **Changed:** the template name moved from the channel to the business, as a map from language to name, kept from the old column by the migration. The inbox sends the template in the customer's language, judged from their latest message or its transcript, else English, else whichever exists. The message stores the template's language, and the send uses it instead of a fixed `en`.
+- **Checked on 2026-11-20** in Meta's "Supported languages" table: `en`, `ar`, `hi` and `ml` are valid template language codes, so the business languages map directly.
+- **Not checked:** whether a name the owner types is an approved template on Meta. That needs the live API (phase 7); a wrong name fails at send time with Meta's error, shown on the message line.
+
+### D-088 Thirty days of seeded history, honest about cost
+
+- **Chosen:** the seed adds about four weeks of closed conversations per demo business: questions in the demo languages, assistant turns, about one in five handed over for a mix of reasons, staff replies, and after-hours waits that end when the shop opens. It is generated from a fixed seed, and only once, recognised by its customers (`HIST.*`). Only closed conversations, so the inbox's open list is unchanged.
+- **Cost:** every seeded turn is recorded as the mock model's, so cost reads $0, and the page says so ("Cost is $0: the mock model answered"). Seeding plausible Bedrock costs would put numbers on screen that no model produced.
+- **Fixed during the phase:** the first idempotency check ("any conversation older than two days") skipped a database that already held older conversations. The script seed's own check now ignores history conversations.
+
+### D-089 `g` then a letter switches sections
+
+- `g i`, `g k`, `g a` and `g s` (DESIGN.md "Keyboard first"). The handler listens in the capture phase and swallows the second key, so `g a` never also opens the inbox's Assign menu.
+
+### Known gaps after phase 6
+
+- **Order import was cut** (decided on 2026-11-20). Orders exist only in the seed; the brief's "sample tenant API" for order lookup is not built. A business has no way yet to load its own orders.
+- **P-04** (WhatsApp credentials in settings) moves to phase 7 with the Meta adapter.
+- **Staff:** no changing an existing person's role (remove and invite again); one business per person, so an email already in use cannot be invited.
+- **One API instance:** closing a removed person's sockets reaches only this instance's connections. Several API instances would need the Socket.IO Redis adapter.
+- **Hours:** no overnight spans, no holidays.
+- **The figure check and hours:** times in the hours fact count as evidence, so a model could quote an opening time correctly from the hours while the knowledge base says otherwise. The hours are the owner's latest word, so this is the intended source.
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). The rest are still open.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. Still open: P-04 (phase 7), P-09 (phase 7) and P-10 (phase 8).
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.

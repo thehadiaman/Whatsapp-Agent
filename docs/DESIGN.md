@@ -259,6 +259,30 @@ There are no KPI tiles. The page has:
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Settings
+
+Approved on 2026-11-20. One page with a section index, not tabs: an owner reads it top to bottom once and then returns to one section. Each section saves on its own, its button says what it saves ("Save opening hours"), and it shows who changed it last, from the audit log ("Changed 19 Nov 14:32 · Anil Kumar"). Agents see the page read-only; the Team section is the owner's alone.
+
+```text
+Settings · Qamar Phone Corner                         owner
+─────────────────────────────────────────────────────────────
+Business        │ Name      Qamar Phone Corner
+Opening hours   │ What you sell and where (the assistant stays on this topic)
+Assistant       │ Time zone Asia/Dubai
+Escalation      │ Save business details   Changed 19 Nov 14:32 · Anil Kumar
+Languages/voice │─────────────────────────────────────────────
+WhatsApp tmpl.  │ Opening hours (Asia/Dubai)   Mon–Thu 10:00 – 22:00 …  Sun Closed
+Team            │ Assistant tone (•) Warm ( ) Brief ( ) Formal, each with a sample reply
+                │ Daily budget [300,000] tokens · [20] replies/customer/hour
+                │ Escalation: words that always go to a person; after [6] replies;
+                │   [x] outside hours, say when a person will reply
+                │ Languages [x] English [x] Arabic [x] Hindi [x] Malayalam
+                │   [x] answer voice notes with voice (no Malayalam voice)
+                │ Reopen template name per language (P-05)
+                │ Team: people, roles, "Make a password reset link", "Remove";
+                │   "Make an invite link" → a link shown once, to hand over yourself
+```
+
 ## 5. Details
 
 ### "Explain this reply" is an itemised receipt
