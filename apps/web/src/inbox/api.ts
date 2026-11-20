@@ -4,53 +4,15 @@ import {
   teamMemberSchema,
   type ConversationDetail,
   type ConversationListItem,
+  turnExplanationSchema,
   type ReplyBody,
   type TeamMember,
+  type TurnExplanation,
 } from '@app/shared';
 import { z } from 'zod';
+import { post, request } from '../lib/client-api';
 
-/** An API error with the server's own sentence, which is written for staff. */
-export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ApiRequestError';
-  }
-}
-
-async function request<T>(path: string, init: RequestInit, schema: z.ZodType<T>): Promise<T> {
-  let response: Response;
-  try {
-    const headers = new Headers(init.headers);
-    headers.set('content-type', 'application/json');
-    response = await fetch(`/api${path}`, { ...init, headers });
-  } catch {
-    throw new ApiRequestError(0, "Couldn't reach the server. Check your connection and try again.");
-  }
-  if (response.status === 401) {
-    // A full page load: the session is gone, so no client state is worth keeping.
-    window.location.assign(new URL('/sign-in', window.location.origin).href);
-    throw new ApiRequestError(401, 'Your session has ended. Sign in to continue.');
-  }
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      typeof body === 'object' &&
-      body !== null &&
-      'message' in body &&
-      typeof body.message === 'string'
-        ? body.message
-        : `The server answered ${String(response.status)}. Try again.`;
-    throw new ApiRequestError(response.status, message);
-  }
-  return schema.parse(body);
-}
-
-const ok = z.unknown();
-const post = (path: string, body: unknown = {}) =>
-  request(path, { method: 'POST', body: JSON.stringify(body) }, ok);
+export { ApiRequestError } from '../lib/client-api';
 
 export const inboxApi = {
   list: (scope: 'open' | 'closed'): Promise<ConversationListItem[]> =>
@@ -65,4 +27,6 @@ export const inboxApi = {
   reply: (id: string, body: ReplyBody) => post(`/conversations/${id}/replies`, body),
   note: (id: string, text: string) => post(`/conversations/${id}/notes`, { text }),
   retry: (messageId: string) => post(`/messages/${messageId}/retry`),
+  explanation: (conversationId: string, turnId: string): Promise<TurnExplanation> =>
+    request(`/conversations/${conversationId}/turns/${turnId}`, {}, turnExplanationSchema),
 };

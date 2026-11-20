@@ -2,6 +2,7 @@
 
 import type { ConversationDetail } from '@app/shared';
 import { formatPhone, formatTime } from './custody';
+import { LastOrder, Receipt } from './receipt';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
 
@@ -16,6 +17,11 @@ export function ContextPane({
   now: Date;
 }) {
   const selected = detail.timeline.find((e) => e.type === 'message' && e.id === selectedMessageId);
+  const selectedTurn = selected?.type === 'message' ? selected.turnId : null;
+  const latestTurn = [...detail.timeline]
+    .reverse()
+    .find((e) => e.type === 'message' && e.turnId !== null);
+  const latestTurnId = latestTurn?.type === 'message' ? latestTurn.turnId : null;
   return (
     <div className="h-full space-y-0 overflow-y-auto">
       <section aria-labelledby="customer-heading" className="border-b border-rule p-4">
@@ -34,6 +40,10 @@ export function ContextPane({
         </p>
       </section>
 
+      {latestTurnId ? (
+        <LastOrder key={latestTurnId} conversationId={detail.id} turnId={latestTurnId} />
+      ) : null}
+
       <section aria-labelledby="explain-heading" className="p-4">
         <h2
           id="explain-heading"
@@ -42,11 +52,15 @@ export function ContextPane({
           Explain this reply
           {selected ? <span className="mono text-meta">{formatTime(selected.at, now)}</span> : null}
         </h2>
-        <p className="mt-1 text-list text-graphite">
-          {selected
-            ? 'No trace was recorded for this reply. Replies the assistant writes from now on show the passages it read, the tools it called, and their latency, tokens and cost here.'
-            : 'Select a reply from the assistant to see the passages, tools and cost behind it.'}
-        </p>
+        {selectedTurn ? (
+          <Receipt key={selectedTurn} conversationId={detail.id} turnId={selectedTurn} />
+        ) : (
+          <p className="mt-1 text-list text-graphite">
+            {selected
+              ? 'This reply has no receipt: it is part of the seeded sample history, written before the assistant ran.'
+              : 'Select a reply from the assistant, or press E, to see the passages, tools and cost behind it.'}
+          </p>
+        )}
       </section>
     </div>
   );

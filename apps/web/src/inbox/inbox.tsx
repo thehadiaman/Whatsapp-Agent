@@ -23,6 +23,7 @@ const SHORTCUTS: [string, string][] = [
   ['A', 'Assign to someone'],
   ['C', 'Close'],
   ['N', 'Add internal note'],
+  ['E', "Explain the assistant's latest reply"],
   ['Esc', 'Back to the list (narrow screens)'],
   ['?', 'Show these shortcuts'],
 ];
@@ -297,6 +298,15 @@ export function Inbox({ me, initialSelectedId }: Props) {
         case 'C':
           if (detail && state !== 'closed') setConfirmingClose(true);
           break;
+        case 'e':
+        case 'E': {
+          // The latest assistant reply; its receipt opens in the context pane.
+          const latest = [...(detail?.timeline ?? [])]
+            .reverse()
+            .find((e) => e.type === 'message' && e.senderType === 'assistant');
+          if (latest) actions.explain(latest.id);
+          break;
+        }
         case 'n':
         case 'N':
           if (detail && state !== 'closed') {
