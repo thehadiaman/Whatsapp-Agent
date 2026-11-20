@@ -63,6 +63,7 @@ Multi-tenant WhatsApp AI support desk. The full brief is `docs/BRIEF.md`; decisi
 - `make e2e` — Playwright at 1440 and 390 px; screenshots land in `apps/web/e2e/screenshots/`.
 - `make up` / `make down` — everything from the production images.
 - Tenant data is only reached through `TenantDb.run()` (API) or `withTenant()` (`@app/db`). Never connect the app as `app_migrator`. Inside one, await queries one at a time: no `Promise.all` on a transaction (D-058).
+- Voice: `@app/voice` holds the Ogg Opus code, the speech ports and the Polly/Transcribe language table (D-072). In mock mode a voice note's words travel in its Ogg comments (D-073): the simulator page's "Send as voice note" sends the typed text in the chosen language. The assistant waits for a pending transcript and hands untranscribable notes to a person (D-074). Regenerate the mock clip with `packages/voice/scripts/make-clip.sh` (needs ffmpeg with libopus).
 - Pipeline tests that turn the assistant on must sweep by hand (`sweepIntervalMs`): the sweeper is fleet-wide and would answer conversations other test files left behind (D-046, D-064).
 - Health: API `/health` and `/ready` on 4000, worker `/health` on `WORKER_HEALTH_PORT` (4020), simulator `/health` on 4010. Through the Next.js proxy the inbox socket uses long-polling, not WebSocket (D-051).
 - Scripted find-and-replace edits must assert that they matched; a silent miss cost a debugging round in phase 2.

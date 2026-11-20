@@ -555,9 +555,76 @@ Meta facts were checked against Meta's documentation on 2026-11-17: webhook and 
 - **Media and orders:** customer photos and documents reach the model only as "[Photo]" markers (P-07). Orders are seeded; importing them comes with settings (phase 6).
 - **Unverified:** Bedrock prices and the Haiku 4.5 SDK version question (D-059).
 
+## Phase 5: voice notes in and out (2026-11-20)
+
+Mock mode only, as planned: the Transcribe and Polly adapters are phase 7. Everything here runs offline, and live mode uses "unconfigured" adapters that hand voice notes to a person and send replies as text.
+
+### D-072 Which voice and which transcription language
+
+- **Checked on 2026-11-20** against the AWS docs ("Available voices", "Bilingual voices", SynthesizeSpeech; Transcribe "Supported languages" and batch language identification).
+- **Voices:** Kajal (neural) for English (`en-IN`) and Hindi (`hi-IN`); Hala (neural) for Gulf Arabic (`ar-AE`); none for Malayalam, so it goes as text. Kajal is fully bilingual and reads Hindi in Latin script too, so Hinglish replies use her with `hi-IN`.
+- **Transcription:** one dialect per language: `en-IN`, `hi-IN`, `ml-IN`, `ar-AE`. Each is supported in batch, and only Swedish and Vietnamese are excluded from language identification.
+- **Rejected:** Aditi (standard engine only) and Zeina (Modern Standard Arabic, standard engine), in favour of the neural voices and the Gulf dialect the Dubai shop's customers speak.
+- **Format facts used:** `ogg_opus` is 48 kHz only; WhatsApp voice messages are Ogg with Opus, mono, up to 16 MB, and play inline only up to 512 KB.
+
+### D-073 A mock voice note carries its words inside the file
+
+- **Chosen:** the simulator writes the customer's words and language into the Ogg Opus comment header (`TRANSCRIPT`, `LANGUAGE`). The product copies the file as usual, and the mock speech-to-text reads the words back from our stored copy. The mock voice for replies is a bundled 1.2 s clip (made with ffmpeg by `packages/voice/scripts/make-clip.sh`) carrying the reply's words the same way, so the simulator shows what a reply says.
+- **Why:** product code is identical in both modes (brief §5). The file is the only thing that crosses from the simulator, as with a real recording.
+- **Rejected:** a simulator endpoint the mock speech-to-text asks for the transcript, which would be a network call and a mock-only path; a sidecar file next to the media.
+- **Own code, not a dependency:** about 250 lines to read and rewrite Ogg pages (checksums recomputed, audio pages copied). No maintained npm package rewrites Opus comments without native ffmpeg, and ffmpeg in the images would add tens of megabytes. Tested by round trip, a multi-page header, a corrupted file, and by ffmpeg decoding the output cleanly (checked by hand).
+
+### D-074 The assistant waits for the transcript; a failed one goes to a person
+
+- **Flow:** webhook → copy the file → transcription job (its own queue, 4 attempts) → transcript stored → assistant job for the conversation's newest customer message.
+- **Waiting:** a turn that finds a pending transcript among the unanswered messages stands aside. When the transcript lands it queues a fresh job (`{messageId}-after-{noteId}`, since a finished job's ID stays taken), and the turn's unique trigger still allows one answer. Text sent while a note was being transcribed is answered once, together with the note (tested with a speech-to-text the test holds open).
+- **Failure:** a note that cannot be transcribed (unreadable, no speech, a language the business does not list, download failed for good) hands the conversation to a person without calling the model. The assistant never guesses what was said, and it does not answer only the typed part of a turn.
+- **Lost jobs:** a sweep (`pending_transcripts`) redoes the copy or the transcription for notes pending more than 30 s and less than an hour.
+- **Rejected:** transcribing inside the copy job, which would mix two failure modes and two retry policies (a Transcribe job takes seconds to minutes).
+
+### D-075 When the assistant speaks
+
+- **Rule:** the business has voice replies on, and the customer's latest message was a transcribed voice note.
+- **Rejected:** speaking every reply when the setting is on (customers who type would get voice notes); remembering a per-conversation preference (more state for little gain).
+
+### D-076 Speech is made at send time, and falls back to text with a reason
+
+- **When:** the reply row keeps its text and a `speech` record. Language and length are decided when the reply is queued: no voice for the language, or over 1,000 characters, means text from the start, so the inbox says why at once. The audio is made by the send job, stored under `tenants/{id}/media/{messageId}`, uploaded to WhatsApp and sent with `voice: true`. A retry reuses the stored audio or the uploaded media ID.
+- **Fallbacks, shown as "Sent as text: …":** no voice (Malayalam), too long, over WhatsApp's 512 KB inline-play limit, or synthesis failed.
+- **Synthesis failure falls back at once** instead of retrying: the customer is waiting for an answer. Trade-off: a Polly throttle that would clear in a second still costs the voice. Revisit with real error rates in phase 8.
+- **Window:** a voice note is free-form, so the 24-hour window applies to it as to text.
+
+### D-077 Staff can send a voice reply
+
+- **Chosen:** "Voice reply: on/off" in the composer when the business has voice replies on; the reply is spoken in the language it is written in (script detection). With the setting off the API refuses with 400 and says how to turn it on.
+- **Why:** DESIGN.md shows the switch, and the same send path serves both.
+
+### D-078 A voice-note player in the counter's style, with the length up front
+
+- **Chosen:** a play button, the time in mono and a ruled progress line. The length is read from the Ogg file when the note is copied or made.
+- **Rejected:** the browser's `<audio controls>`: it looks different in every browser, against DESIGN.md's "no unchanged component-library look", and shows 0:00 until the file loads.
+- **Fallback:** a browser that cannot play Ogg Opus shows "This browser can't play it" with a download link.
+
+### D-079 The thread opens at the latest message
+
+- **Changed:** opening a conversation scrolls to the newest line, and new lines follow unless the reader has scrolled up. Phase 3 opened every thread at the top, which voice notes made obvious at 390 px.
+
+### D-080 Tenant languages and voice replies are tenant settings
+
+- **Chosen:** `tenants.languages` (a check limits it to `en`, `hi`, `ml`, `ar`) and `tenants.voice_replies` (default off). The seed sets them only when it creates a tenant, because afterwards they belong to the owner (the settings page is phase 6).
+- **Consequence:** a database seeded before this phase keeps English only and voice replies off. `make reset` reseeds; I updated the two demo tenants in the local database by hand.
+
+### Known gaps after phase 5
+
+- **Live adapters:** Transcribe and Polly are phase 7. P-09 (detect the language once, then reuse it) is still open and lands there; the port already takes a list of languages, so it needs no new interface.
+- **Short notes and language ID:** Transcribe recommends 30 s of speech for identification, and most voice notes are shorter. Expect misidentification between Hindi and Indian English. Phase 8 measures it.
+- **Playback:** the API streams audio from storage. Presigned S3 URLs for playback come with the S3 adapter (phase 7), and the media expiry rule with Terraform (phase 9).
+- **The simulator types, it does not record:** voice notes are the bundled clip plus typed words. No microphone capture.
+- **Not checked:** Polly and Transcribe prices (phase 7, with the adapters).
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). The rest are still open.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). The rest are still open.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.
