@@ -99,7 +99,9 @@ export interface HarnessOptions {
   statusStepMs?: number;
   seed?: number;
   /** Off by default, so pipeline tests see only the replies they send. */
-  assistant?: { model?: ChatModel };
+  assistant?: { model?: ChatModel; debounceMs?: number };
+  /** The sweeper is fleet-wide; tests that count model calls turn the timer off and sweep by hand. */
+  sweepIntervalMs?: number;
 }
 
 /**
@@ -206,7 +208,11 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     assistant: {
       model: options.assistant?.model ?? new MockChatModel(),
       embedder: new MockEmbedder(),
-      settings: { enabled: Boolean(options.assistant), debounceMs: 0, maxOutputTokens: 1024 },
+      settings: {
+        enabled: Boolean(options.assistant),
+        debounceMs: options.assistant?.debounceMs ?? 0,
+        maxOutputTokens: 1024,
+      },
     },
     events: new RedisEventPublisher(
       publisher,
@@ -216,7 +222,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const workers = startWorkers(deps, {
     connection,
     prefix,
-    sweepIntervalMs: 1_000,
+    sweepIntervalMs: options.sweepIntervalMs ?? 1_000,
     sweepAfterSeconds: 2,
   });
 

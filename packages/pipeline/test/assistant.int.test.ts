@@ -42,10 +42,16 @@ const answer = (reply: string, basis = 'knowledge'): ModelResponse => ({
   result: { type: 'answer', answer: { reply, basis } } as ModelResponse['result'],
 });
 
-async function start(options: HarnessOptions & { model?: ChatModel } = {}) {
+async function start(options: HarnessOptions & { model?: ChatModel; debounceMs?: number } = {}) {
   h = await startHarness({
     ...options,
-    assistant: { ...(options.model ? { model: options.model } : {}) },
+    // Earlier test files leave unanswered conversations with the assistant off;
+    // the fleet-wide sweeper would answer them here, so it runs only by hand.
+    sweepIntervalMs: 3_600_000,
+    assistant: {
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.debounceMs !== undefined ? { debounceMs: options.debounceMs } : {}),
+    },
   });
   await h.migrator.db
     .update(schema.tenants)
@@ -432,5 +438,38 @@ describe('failures', () => {
       outcome: 'failed',
       detail: 'model response did not match the expected shape',
     });
+  });
+});
+
+describe('recovery', () => {
+  it('the sweeper answers a customer whose assistant job was lost', async () => {
+    await start({ debounceMs: 60_000 });
+    write(0, 'do you repair screens?');
+    const message = await (async () => {
+      let found: { id: string } | undefined;
+      await waitFor('message stored', async () => {
+        [found] = await h.migrator.db
+          .select({ id: schema.messages.id })
+          .from(schema.messages)
+          .where(
+            and(
+              eq(schema.messages.tenantId, h.tenant.id),
+              eq(schema.messages.direction, 'inbound'),
+            ),
+          );
+        return Boolean(found);
+      });
+      return found!;
+    })();
+    // A crash between commit and enqueue looks like this: the job is gone.
+    await waitFor('job queued', async () =>
+      Boolean(await h.deps.queues.assistant.getJob(message.id)),
+    );
+    await h.deps.queues.assistant.remove(message.id);
+    // The sweep only picks up messages older than its threshold (2 s in the harness).
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    await h.workers.sweep();
+    await waitFor('reply after sweep', () => Promise.resolve(repliesOn(0).length === 1));
+    expect((await turns())[0]?.triggerMessageId).toBe(message.id);
   });
 });
