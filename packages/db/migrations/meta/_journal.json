@@ -64,6 +64,20 @@
       "when": 1795173589225,
       "tag": "0008_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795176220041,
+      "tag": "0009_reembed",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795176289060,
+      "tag": "0010_whatsapp_credentials",
+      "breakpoints": true
     }
   ]
 }

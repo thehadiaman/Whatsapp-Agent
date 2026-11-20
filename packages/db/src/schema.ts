@@ -215,7 +215,12 @@ export const channels = pgTable(
     provider: channelProvider('provider').notNull(),
     phoneNumberId: text('phone_number_id').notNull(),
     displayPhoneNumber: text('display_phone_number').notNull(),
+    /** Meta channels (P-04): the WhatsApp Business Account the number belongs to. */
+    wabaId: text('waba_id'),
+    /** Meta channels: the system-user access token, AES-256-GCM sealed (D-094). Never sent to a browser. */
+    accessTokenSealed: text('access_token_sealed'),
     createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [
     unique('channels_provider_phone_number_id_unique').on(t.provider, t.phoneNumberId),
