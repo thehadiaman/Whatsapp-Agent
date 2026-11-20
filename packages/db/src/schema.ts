@@ -96,22 +96,40 @@ export const verifications = pgTable('verifications', {
 
 export const tenantRole = pgEnum('tenant_role', ['owner', 'agent']);
 
-export const tenants = pgTable('tenants', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  slug: text('slug').notNull().unique(),
-  name: text('name').notNull(),
-  timezone: text('timezone').notNull(),
-  /** Counter for conversations.number; taken under the tenant row's lock. */
-  nextConversationNumber: integer('next_conversation_number').notNull().default(1),
-  /** What the business sells and where, in the owner's words. Defines "on topic" for the assistant. */
-  assistantSummary: text('assistant_summary').notNull().default(''),
-  /** Model tokens (in + out) the assistant may use per local day; then it hands over. */
-  assistantDailyTokenBudget: integer('assistant_daily_token_budget').notNull().default(300_000),
-  /** Assistant turns per customer per hour; more is treated as spam and goes to a person. */
-  assistantTurnsPerCustomerHour: integer('assistant_turns_per_customer_hour').notNull().default(20),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const tenants = pgTable(
+  'tenants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull().unique(),
+    name: text('name').notNull(),
+    timezone: text('timezone').notNull(),
+    /** Counter for conversations.number; taken under the tenant row's lock. */
+    nextConversationNumber: integer('next_conversation_number').notNull().default(1),
+    /** What the business sells and where, in the owner's words. Defines "on topic" for the assistant. */
+    assistantSummary: text('assistant_summary').notNull().default(''),
+    /** Model tokens (in + out) the assistant may use per local day; then it hands over. */
+    assistantDailyTokenBudget: integer('assistant_daily_token_budget').notNull().default(300_000),
+    /** Assistant turns per customer per hour; more is treated as spam and goes to a person. */
+    assistantTurnsPerCustomerHour: integer('assistant_turns_per_customer_hour')
+      .notNull()
+      .default(20),
+    /** Languages customers speak to this business (en, hi, ml, ar): voice notes are transcribed as one of these. */
+    languages: text('languages')
+      .array()
+      .notNull()
+      .default(sql`'{en}'::text[]`),
+    /** Answer a voice note with a voice note, where Polly has a voice for the language. */
+    voiceReplies: boolean('voice_replies').notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    check(
+      'tenants_languages_known',
+      sql`cardinality(${t.languages}) between 1 and 4 and ${t.languages} <@ array['en', 'hi', 'ml', 'ar']::text[]`,
+    ),
+  ],
+);
 
 export const memberships = pgTable(
   'memberships',
@@ -328,6 +346,32 @@ export interface StoredMedia {
   sizeBytes?: number;
 }
 
+export type StoredTranscript =
+  | { status: 'pending' }
+  | {
+      status: 'done';
+      text: string;
+      language: string;
+      /** Which speech-to-text produced it: `transcribe` or `simulator`. */
+      engine: string;
+      confidence: number | null;
+    }
+  | { status: 'failed'; reason: string };
+
+/** Why a reply that was meant to be spoken went as text. */
+export type SpeechFallback = 'no_voice' | 'too_long' | 'too_large' | 'synthesis_failed';
+
+export interface StoredSpeech {
+  /** The reply's spoken language: en, hi, ml or ar. */
+  language: string;
+  /** Polly voice ID; null when the language has no voice. */
+  voiceId: string | null;
+  fallback: SpeechFallback | null;
+  /** Text-to-speech engine that made the audio (`polly` or `mock`), once it has. */
+  engine?: string;
+  durationMs?: number;
+}
+
 export interface StoredError {
   code: number | null;
   message: string;
@@ -354,6 +398,10 @@ export const messages = pgTable(
     waMessageId: text('wa_message_id'),
     body: text('body'),
     media: jsonb('media').$type<StoredMedia>(),
+    /** Inbound audio only: the speech-to-text result. */
+    transcript: jsonb('transcript').$type<StoredTranscript>(),
+    /** Outbound replies asked to be spoken: which voice, or why they went as text. */
+    speech: jsonb('speech').$type<StoredSpeech>(),
     templateName: text('template_name'),
     status: messageStatus('status').notNull(),
     statusAt: timestamp('status_at', { withTimezone: true }).notNull().defaultNow(),
