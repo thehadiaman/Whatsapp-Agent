@@ -45,6 +45,12 @@ test.describe('analytics and settings', () => {
       'Not saved. Monday: closing time must be after opening time.',
     );
 
+    // Mock mode: the WhatsApp number section explains why a real number can't connect here.
+    const whatsapp = page.getByRole('region', { name: 'WhatsApp number' });
+    await expect(whatsapp.getByText(/This desk runs in mock mode/)).toBeVisible();
+    await expect(whatsapp.getByText(/simulator \(demo\)/)).toBeVisible();
+    await expect(whatsapp.getByRole('button', { name: 'Save WhatsApp number' })).toHaveCount(0);
+
     await page.reload();
     await expect(assistant.getByRole('radio', { name: /^Brief/ })).toBeChecked();
     await assistant.getByRole('radio', { name: /^Warm/ }).check();

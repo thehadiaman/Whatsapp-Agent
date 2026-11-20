@@ -7,6 +7,9 @@ import {
   type StaffInviteBody,
   type StaffLink,
   type TenantSettings,
+  type WhatsappNumberBody,
+  type WhatsappNumbers,
+  whatsappNumbersSchema,
 } from '@app/shared';
 import { z } from 'zod';
 import { request } from '../lib/client-api';
@@ -18,6 +21,14 @@ export const settingsApi = {
       `/settings/${section}`,
       { method: 'PUT', body: JSON.stringify(body) },
       tenantSettingsSchema,
+    ),
+  whatsapp: (): Promise<WhatsappNumbers> =>
+    request('/settings/whatsapp', {}, whatsappNumbersSchema),
+  connect: (body: WhatsappNumberBody): Promise<WhatsappNumbers> =>
+    request(
+      '/settings/whatsapp',
+      { method: 'PUT', body: JSON.stringify(body) },
+      whatsappNumbersSchema,
     ),
   staff: (): Promise<Staff> => request('/staff', {}, staffSchema),
   invite: (body: StaffInviteBody): Promise<StaffLink> =>

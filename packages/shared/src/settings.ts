@@ -25,6 +25,7 @@ export const SETTINGS_SECTIONS = [
   'escalation',
   'voice',
   'templates',
+  'whatsapp',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
@@ -103,6 +104,40 @@ export const tenantSettingsSchema = z.object({
   lastChanged: z.record(z.enum(SETTINGS_SECTIONS), changed),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
+
+// --- WhatsApp number (P-04) ------------------------------------------------------
+
+/**
+ * Connecting the business's own number. The token is write-only: the API
+ * seals it (D-094) and never returns it; leaving it out keeps the saved one.
+ */
+export const whatsappNumberBodySchema = z.strictObject({
+  phoneNumberId: z
+    .string()
+    .regex(/^\d{5,25}$/, 'the phone number ID from WhatsApp Manager (digits)'),
+  wabaId: z.string().regex(/^\d{5,25}$/, 'the WhatsApp Business Account ID (digits)'),
+  displayPhoneNumber: z.string().trim().min(6).max(30),
+  accessToken: z.string().trim().min(20, 'paste the whole system-user token').max(1_000).optional(),
+});
+export type WhatsappNumberBody = z.infer<typeof whatsappNumberBodySchema>;
+
+export const whatsappNumbersSchema = z.object({
+  mode: z.enum(['mock', 'live']),
+  /** False in mock mode or without a credentials key: the form explains why. */
+  canConnect: z.boolean(),
+  numbers: z.array(
+    z.object({
+      id: z.uuid(),
+      provider: z.enum(['meta', 'simulator']),
+      phoneNumberId: z.string(),
+      displayPhoneNumber: z.string(),
+      wabaId: z.string().nullable(),
+      tokenSaved: z.boolean(),
+      updatedAt: z.iso.datetime({ offset: true }),
+    }),
+  ),
+});
+export type WhatsappNumbers = z.infer<typeof whatsappNumbersSchema>;
 
 // --- staff -------------------------------------------------------------------------
 

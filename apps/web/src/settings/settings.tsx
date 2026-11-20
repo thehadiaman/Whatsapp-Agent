@@ -20,6 +20,8 @@ import {
   type StaffLink,
   type TenantSettings,
   type TenantRole,
+  type WhatsappNumbers,
+  whatsappNumberBodySchema,
 } from '@app/shared';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { z } from 'zod';
@@ -41,6 +43,7 @@ const INDEX: { id: string; label: string }[] = [
   { id: 'escalation', label: 'Escalation' },
   { id: 'voice', label: 'Languages and voice' },
   { id: 'templates', label: 'WhatsApp templates' },
+  { id: 'whatsapp', label: 'WhatsApp number' },
   { id: 'team', label: 'Team' },
 ];
 
@@ -609,6 +612,140 @@ function TemplatesSection({
   );
 }
 
+/** The business's own WhatsApp number (P-04). The token is write-only. */
+function WhatsappSection({ settings }: { settings: TenantSettings }) {
+  const [numbers, setNumbers] = useState<WhatsappNumbers | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    phoneNumberId: '',
+    wabaId: '',
+    displayPhoneNumber: '',
+    accessToken: '',
+  });
+
+  useEffect(() => {
+    settingsApi.whatsapp().then(
+      (found) => {
+        setNumbers(found);
+        const own = found.numbers.find((n) => n.provider === 'meta');
+        if (own) {
+          setForm({
+            phoneNumberId: own.phoneNumberId,
+            wabaId: own.wabaId ?? '',
+            displayPhoneNumber: own.displayPhoneNumber,
+            accessToken: '',
+          });
+        }
+      },
+      (e: unknown) => {
+        setError(`Couldn't load the numbers. ${messageOf(e)}`);
+      },
+    );
+  }, []);
+
+  const own = numbers?.numbers.find((n) => n.provider === 'meta');
+  return (
+    <Section
+      id="whatsapp"
+      title="WhatsApp number"
+      section="whatsapp"
+      settings={settings}
+      canEdit={numbers?.canConnect ?? false}
+      saveLabel="Save WhatsApp number"
+      description="Your own number, from WhatsApp Manager: its phone number ID, your WhatsApp Business Account ID and a system-user access token. The token is stored encrypted and never shown again."
+      onSave={async () => {
+        const body = {
+          phoneNumberId: form.phoneNumberId.trim(),
+          wabaId: form.wabaId.trim(),
+          displayPhoneNumber: form.displayPhoneNumber,
+          ...(form.accessToken.trim() ? { accessToken: form.accessToken.trim() } : {}),
+        };
+        const parsed = whatsappNumberBodySchema.safeParse(body);
+        if (!parsed.success) return `Not saved. ${problem(parsed.error)}`;
+        setNumbers(await settingsApi.connect(parsed.data));
+        setForm({ ...form, accessToken: '' });
+        return null;
+      }}
+    >
+      {error ? (
+        <p role="alert" className="text-stamp">
+          {error}
+        </p>
+      ) : !numbers ? (
+        <p className="mono text-meta text-graphite">Loading numbers…</p>
+      ) : (
+        <>
+          <ul className="mono text-meta" aria-label="Numbers">
+            {numbers.numbers.map((n) => (
+              <li key={n.id}>
+                {n.displayPhoneNumber} ·{' '}
+                {n.provider === 'meta' ? 'your WhatsApp number' : 'simulator (demo)'}
+                {n.provider === 'meta' ? ` · token ${n.tokenSaved ? 'saved' : 'missing'}` : ''}
+              </li>
+            ))}
+          </ul>
+          {!numbers.canConnect ? (
+            <p className="text-graphite">
+              {numbers.mode === 'mock'
+                ? 'This desk runs in mock mode: customers write through the simulator. A real number connects in live mode.'
+                : "Tokens can't be stored yet: the server has no CREDENTIALS_KEY. Ask whoever runs it."}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-4">
+            <Field label="Phone number ID">
+              <input
+                className="field mono w-56"
+                inputMode="numeric"
+                value={form.phoneNumberId}
+                onChange={(e) => {
+                  setForm({ ...form, phoneNumberId: e.target.value });
+                }}
+              />
+            </Field>
+            <Field label="WhatsApp Business Account ID">
+              <input
+                className="field mono w-56"
+                inputMode="numeric"
+                value={form.wabaId}
+                onChange={(e) => {
+                  setForm({ ...form, wabaId: e.target.value });
+                }}
+              />
+            </Field>
+            <Field label="Number as customers see it">
+              <input
+                className="field w-56"
+                value={form.displayPhoneNumber}
+                onChange={(e) => {
+                  setForm({ ...form, displayPhoneNumber: e.target.value });
+                }}
+              />
+            </Field>
+          </div>
+          <Field
+            label="Access token"
+            hint={
+              own?.tokenSaved
+                ? 'A token is saved. Paste a new one only to replace it.'
+                : 'A system-user token with whatsapp_business_messaging.'
+            }
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              className="field mono"
+              value={form.accessToken}
+              onChange={(e) => {
+                setForm({ ...form, accessToken: e.target.value });
+              }}
+            />
+          </Field>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function LinkBox({ link, who, kind }: { link: StaffLink; who: string; kind: 'invite' | 'reset' }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -885,7 +1022,7 @@ export function Settings({ isOwner, meId }: { isOwner: boolean; meId: string }) 
       >
         <p className="display text-pane">Settings</p>
         <ul className="mt-3 space-y-1">
-          {INDEX.filter((s) => s.id !== 'team' || isOwner).map((s) => (
+          {INDEX.filter((s) => (s.id !== 'team' && s.id !== 'whatsapp') || isOwner).map((s) => (
             <li key={s.id}>
               <a href={`#${s.id}`} className="text-list underline-offset-2 hover:underline">
                 {s.label}
@@ -920,6 +1057,7 @@ export function Settings({ isOwner, meId }: { isOwner: boolean; meId: string }) 
               canEdit={isOwner}
               save={save}
             />
+            {isOwner ? <WhatsappSection settings={settings} /> : null}
             {isOwner ? <TeamSection meId={meId} /> : null}
           </div>
         )}

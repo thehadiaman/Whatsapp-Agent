@@ -10,14 +10,29 @@ import {
   type BusinessLanguage,
   type SettingsSection,
   type TenantSettings,
+  type WhatsappNumberBody,
+  type WhatsappNumbers,
+  whatsappNumberBodySchema,
 } from '@app/shared';
-import { Body, Controller, Get, NotFoundException, Put } from '@nestjs/common';
+import { channelTokenContext, type ProviderRegistry } from '@app/pipeline';
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Put,
+} from '@nestjs/common';
 import { desc, eq, like } from 'drizzle-orm';
 import type { z } from 'zod';
 import { Access } from '../auth/access.guard.js';
 import { CurrentMember, type MemberPrincipal } from '../auth/principal.js';
 import { RateLimit } from '../common/rate-limit.js';
 import { ZodBody } from '../common/zod-body.pipe.js';
+import { API_CONFIG, type ApiConfig } from '../config.js';
+import { PROVIDERS } from '../infra/tokens.js';
 import { TenantDb } from '../tenancy/tenant-db.service.js';
 
 type Tenant = typeof schema.tenants.$inferSelect;
@@ -51,7 +66,11 @@ const actionOf = (section: SettingsSection) => `settings.${section}.updated`;
  */
 @Controller('settings')
 export class SettingsController {
-  constructor(private readonly tenantDb: TenantDb) {}
+  constructor(
+    private readonly tenantDb: TenantDb,
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
+    @Inject(PROVIDERS) private readonly providers: ProviderRegistry,
+  ) {}
 
   @Get()
   @Access('member')
@@ -132,6 +151,112 @@ export class SettingsController {
     });
   }
 
+  /** The business's WhatsApp numbers: the simulator's, and its own Meta number (P-04). */
+  @Get('whatsapp')
+  @Access('owner')
+  whatsapp(@CurrentMember() member: MemberPrincipal): Promise<WhatsappNumbers> {
+    return this.tenantDb.run(member, (tx) => this.numbers(tx));
+  }
+
+  @Put('whatsapp')
+  @Access('owner')
+  @RateLimit({ name: 'settings', limit: 30, windowSeconds: 60 })
+  async connect(
+    @CurrentMember() member: MemberPrincipal,
+    @Body(new ZodBody(whatsappNumberBodySchema)) body: WhatsappNumberBody,
+  ): Promise<WhatsappNumbers> {
+    if (this.config.APP_MODE !== 'live') {
+      throw new ConflictException(
+        'This desk runs in mock mode: customers write through the simulator. Connect a WhatsApp number in live mode.',
+      );
+    }
+    const box = this.providers.secrets;
+    if (!box) {
+      throw new ConflictException(
+        "WhatsApp tokens can't be stored: the server has no CREDENTIALS_KEY. Ask whoever runs it.",
+      );
+    }
+    const sealed = body.accessToken
+      ? box.seal(body.accessToken, channelTokenContext(body.phoneNumberId))
+      : null;
+    return this.tenantDb.run(member, async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(schema.channels)
+        .where(eq(schema.channels.provider, 'meta'));
+      if (current && current.phoneNumberId !== body.phoneNumberId) {
+        throw new ConflictException(
+          'This business already has a WhatsApp number. Changing the number itself is not supported yet.',
+        );
+      }
+      if (!current && !sealed) {
+        throw new BadRequestException('Paste the access token to connect the number.');
+      }
+      const values = {
+        displayPhoneNumber: body.displayPhoneNumber,
+        wabaId: body.wabaId,
+        ...(sealed ? { accessTokenSealed: sealed } : {}),
+        updatedAt: new Date(),
+      };
+      if (current) {
+        await tx.update(schema.channels).set(values).where(eq(schema.channels.id, current.id));
+      } else {
+        // Another business's row is hidden by row-level security; the unique
+        // constraint on (provider, phone number ID) still catches it.
+        const [inserted] = await tx
+          .insert(schema.channels)
+          .values({
+            tenantId: member.tenantId,
+            provider: 'meta',
+            phoneNumberId: body.phoneNumberId,
+            ...values,
+          })
+          .onConflictDoNothing()
+          .returning({ id: schema.channels.id });
+        if (!inserted) {
+          throw new ConflictException('That number is already connected to another business.');
+        }
+      }
+      // The token itself is never in the audit log; only that it changed.
+      await this.tenantDb.audit(tx, member, {
+        action: actionOf('whatsapp'),
+        targetType: 'tenant',
+        targetId: member.tenantId,
+        before: current
+          ? {
+              phoneNumberId: current.phoneNumberId,
+              wabaId: current.wabaId,
+              displayPhoneNumber: current.displayPhoneNumber,
+            }
+          : null,
+        after: {
+          phoneNumberId: body.phoneNumberId,
+          wabaId: body.wabaId,
+          displayPhoneNumber: body.displayPhoneNumber,
+          tokenChanged: sealed !== null,
+        },
+      });
+      return this.numbers(tx);
+    });
+  }
+
+  private async numbers(tx: Transaction): Promise<WhatsappNumbers> {
+    const rows = await tx.select().from(schema.channels);
+    return {
+      mode: this.config.APP_MODE,
+      canConnect: this.config.APP_MODE === 'live' && this.providers.secrets !== null,
+      numbers: rows.map((c) => ({
+        id: c.id,
+        provider: c.provider,
+        phoneNumberId: c.phoneNumberId,
+        displayPhoneNumber: c.displayPhoneNumber,
+        wabaId: c.wabaId,
+        tokenSaved: c.accessTokenSealed !== null,
+        updatedAt: c.updatedAt.toISOString(),
+      })),
+    };
+  }
+
   @Put('templates')
   @Access('owner')
   @RateLimit({ name: 'settings', limit: 30, windowSeconds: 60 })
@@ -145,7 +270,7 @@ export class SettingsController {
   /** Updates one section and records it, in one transaction. */
   private save(
     member: MemberPrincipal,
-    section: SettingsSection,
+    section: Exclude<SettingsSection, 'whatsapp'>,
     values: Partial<typeof schema.tenants.$inferInsert>,
   ): Promise<TenantSettings> {
     return this.tenantDb.run(member, async (tx) => {
