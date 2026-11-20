@@ -1,4 +1,5 @@
 import { createDb } from '@app/db';
+import { LocalDiskStorage } from '@app/pipeline';
 import {
   DEMO_DEFAULT_PASSWORD,
   DEMO_PLATFORM_ADMIN,
@@ -8,6 +9,7 @@ import {
 } from '@app/shared';
 import { z } from 'zod';
 import { seedConversations } from '../seed/conversations.js';
+import { seedKnowledge } from '../seed/knowledge.js';
 import { demoTenants, upsertTenant, upsertUser } from '../seed/seed.js';
 
 // Seeds the demo tenants and users. Idempotent: safe to run on every `make dev`.
@@ -21,6 +23,8 @@ const env = parseEnv(
       SEED_PASSWORD: z.string().min(12).optional(),
       /** Extra generated conversations for Qamar, to see the long-list state. */
       SEED_BULK_CONVERSATIONS: z.coerce.number().int().min(0).max(2000).default(0),
+      /** Where the seeded knowledge files go; the same directory the API and worker use. */
+      MEDIA_STORAGE_DIR: z.string().default('.data/media'),
     })
     .refine((e) => e.NODE_ENV !== 'production' || e.SEED_PASSWORD !== undefined, {
       message: 'SEED_PASSWORD is required in production',
@@ -37,7 +41,8 @@ try {
     await upsertTenant(db, tenant);
   }
   await seedConversations(db, { bulk: env.SEED_BULK_CONVERSATIONS });
-  console.log('seed: demo tenants, users and conversations ready');
+  await seedKnowledge(db, new LocalDiskStorage(env.MEDIA_STORAGE_DIR));
+  console.log('seed: demo tenants, users, conversations, knowledge and orders ready');
 } finally {
   await close();
 }
