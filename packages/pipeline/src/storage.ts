@@ -3,13 +3,21 @@ import { dirname, join, resolve } from 'node:path';
 
 /**
  * Object storage for media. Keys are always `tenants/{tenantId}/...` (brief §4).
- * Mock mode: local disk. Live mode: S3 (phase 7), behind the same interface.
+ * Mock mode: local disk. Live mode: S3 (`@app/live`), behind the same interface.
  */
 export interface ObjectStorage {
   put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
   get(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
   /** Removes the object if it exists. */
   delete(key: string): Promise<void>;
+  /**
+   * A short-lived link the browser can fetch directly (S3), or absent when
+   * the API must stream the file itself (local disk).
+   */
+  signedUrl?(
+    key: string,
+    options: { contentType: string; inline: boolean; expiresIn: number },
+  ): Promise<string>;
 }
 
 const KEY = /^tenants\/[0-9a-f-]{36}\/[a-z]+\/[0-9a-f-]{36}$/;

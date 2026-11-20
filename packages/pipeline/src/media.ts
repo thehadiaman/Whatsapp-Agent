@@ -35,21 +35,25 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
       .where(eq(schema.messages.id, messageId));
     if (!message?.media || message.media.storageKey) return null;
     const [channel] = await tx
-      .select({ provider: schema.channels.provider })
+      .select({
+        provider: schema.channels.provider,
+        phoneNumberId: schema.channels.phoneNumberId,
+        accessTokenSealed: schema.channels.accessTokenSealed,
+      })
       .from(schema.channels)
       .where(eq(schema.channels.id, message.channelId));
     return channel
       ? {
           kind: message.kind,
           media: message.media,
-          provider: channel.provider,
+          channel,
           conversationId: message.conversationId,
         }
       : null;
   });
   if (!target) return;
 
-  const client = deps.providers.client(target.provider);
+  const client = deps.providers.client(target.channel);
   const info = await client.getMedia(target.media.id);
   const file = await client.downloadMedia(info.url);
   const key = mediaKey(tenantId, messageId);

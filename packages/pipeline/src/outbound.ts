@@ -17,6 +17,7 @@ import {
 import { GraphApiError, type OutboundContent, type Recipient } from '@app/whatsapp';
 import { DelayedError, UnrecoverableError, type Job } from 'bullmq';
 import { and, asc, eq, gte, lt, sql } from 'drizzle-orm';
+import type { ChannelCredentials } from './config.js';
 import { NotFoundError } from './conversations.js';
 import { recordDeadLetter } from './dead-letters.js';
 import { nowOf, type PipelineDeps } from './deps.js';
@@ -132,7 +133,7 @@ type Prepared =
   | {
       kind: 'send';
       conversationId: string;
-      provider: 'meta' | 'simulator';
+      channel: ChannelCredentials;
       phoneNumberId: string;
       channelId: string;
       recipient: Recipient;
@@ -255,7 +256,11 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
     return {
       kind: 'send',
       conversationId: message.conversationId,
-      provider: channel.provider,
+      channel: {
+        provider: channel.provider,
+        phoneNumberId: channel.phoneNumberId,
+        accessTokenSealed: channel.accessTokenSealed,
+      },
       phoneNumberId: channel.phoneNumberId,
       channelId: channel.id,
       recipient,
@@ -282,7 +287,7 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
   }
 
   try {
-    const client = deps.providers.client(prepared.provider);
+    const client = deps.providers.client(prepared.channel);
     const content = prepared.voice
       ? await voiceContent(deps, tenantId, messageId, prepared.voice, (file) =>
           client.uploadMedia(prepared.phoneNumberId, file),

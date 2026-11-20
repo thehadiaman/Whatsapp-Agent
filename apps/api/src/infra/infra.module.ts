@@ -2,7 +2,7 @@ import { createDb, type DbHandle } from '@app/db';
 import {
   assistantDeps,
   createQueues,
-  LocalDiskStorage,
+  storageFor,
   pipelineSettings,
   ProviderRegistry,
   RedisEventPublisher,
@@ -91,9 +91,8 @@ function watchPool(handle: DbHandle, logger: Logger, name: string): DbHandle {
     {
       provide: STORAGE,
       inject: [API_CONFIG],
-      // Mock mode: local disk, shared with the worker. Live mode: S3 (phase 7).
-      useFactory: (config: ApiConfig): ObjectStorage =>
-        new LocalDiskStorage(config.MEDIA_STORAGE_DIR),
+      // Local disk shared with the worker, or S3 in live mode with a bucket.
+      useFactory: (config: ApiConfig): ObjectStorage => storageFor(config),
     },
     {
       provide: ASSISTANT,

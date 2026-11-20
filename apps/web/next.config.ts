@@ -7,14 +7,19 @@ import type { NextConfig } from 'next';
 // Read at build time: the Docker build passes it as a build argument.
 const apiInternalUrl = process.env['API_INTERNAL_URL'] ?? 'http://localhost:4000';
 const isDev = process.env['NODE_ENV'] !== 'production';
+// Live mode: photos and voice notes load from short-lived S3 links (D-092),
+// e.g. https://desk-media.s3.ap-south-1.amazonaws.com. Unset: same origin only.
+const mediaOrigin = process.env['MEDIA_ORIGIN']
+  ? ` ${new URL(process.env['MEDIA_ORIGIN']).origin}`
+  : '';
 
 const contentSecurityPolicy = [
   "default-src 'self'",
   // Next.js inlines its bootstrap script; dev also needs eval for fast refresh.
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "media-src 'self' blob:",
+  `img-src 'self' data: blob:${mediaOrigin}`,
+  `media-src 'self' blob:${mediaOrigin}`,
   "font-src 'self'",
   "connect-src 'self'",
   "frame-ancestors 'none'",

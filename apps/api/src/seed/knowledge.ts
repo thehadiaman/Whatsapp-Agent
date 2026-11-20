@@ -1,4 +1,4 @@
-import { MockEmbedder, passageFromFaq, type PassageDraft } from '@app/assistant';
+import { MockEmbedder, passageFromFaq, type Embedder, type PassageDraft } from '@app/assistant';
 import { schema, type Database, type OrderItem } from '@app/db';
 import {
   KNOWLEDGE_CONTENT_TYPES,
@@ -214,14 +214,15 @@ async function seedSources(
   storage: ObjectStorage,
   tenantId: string,
   knowledge: SeedKnowledge,
+  embedder: Embedder,
 ): Promise<void> {
-  const embedder = new MockEmbedder();
   const add = async (
     source: Omit<typeof schema.knowledgeSources.$inferInsert, 'tenantId'>,
     passages: PassageDraft[],
   ) => {
     const vectors = await embedder.embed(
       passages.map((p) => (p.heading ? `${p.heading}\n${p.text}` : p.text)),
+      'document',
     );
     const [row] = await db
       .insert(schema.knowledgeSources)
@@ -304,7 +305,8 @@ async function seedOrders(db: Database, tenantId: string, orders: SeedOrder[], n
 export async function seedKnowledge(
   db: Database,
   storage: ObjectStorage,
-  options: { now?: number } = {},
+  /** The app's embedder: the mock offline, Cohere in live mode, so retrieval can compare. */
+  options: { now?: number; embedder?: Embedder } = {},
 ): Promise<void> {
   const now = options.now ?? Date.now();
   for (const business of DEMO_BUSINESSES) {
@@ -324,7 +326,7 @@ export async function seedKnowledge(
       .update(schema.tenants)
       .set({ assistantSummary: knowledge.summary })
       .where(eq(schema.tenants.id, tenant.id));
-    await seedSources(db, storage, tenant.id, knowledge);
+    await seedSources(db, storage, tenant.id, knowledge, options.embedder ?? new MockEmbedder());
     await seedOrders(db, tenant.id, ORDERS[business.slug] ?? [], now);
   }
 }

@@ -49,6 +49,7 @@ import { currentRequest } from '../common/request-context.js';
 import { ZodBody } from '../common/zod-body.pipe.js';
 import { EVENTS, QUEUES, STORAGE } from '../infra/tokens.js';
 import { TenantDb } from '../tenancy/tenant-db.service.js';
+import { API_CONFIG, type ApiConfig } from '../config.js';
 import { conversationDetail, listConversations, reopenTemplateFor } from './inbox.queries.js';
 
 function toHttp(error: unknown): never {
@@ -446,10 +447,11 @@ export class MediaController {
   constructor(
     private readonly tenantDb: TenantDb,
     @Inject(STORAGE) private readonly storage: ObjectStorage,
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
   /**
-   * Streams a stored attachment. Only images and audio render inline; anything
+   * Streams a stored attachment, or redirects to a short-lived S3 link. Only images and audio render inline; anything
    * else (PDF, HTML, SVG sent by a customer) downloads, so it cannot run in
    * the inbox's origin.
    */
@@ -467,6 +469,19 @@ export class MediaController {
       return row?.media ?? null;
     });
     if (!media?.storageKey) throw new NotFoundException('This attachment is not available yet.');
+    const baseMime = media.mimeType.split(';')[0]?.trim() ?? '';
+    if (this.storage.signedUrl) {
+      // S3: a short-lived link fetched by the browser, with the type and
+      // disposition fixed in its signature (D-092). Never cached longer than it lives.
+      const url = await this.storage.signedUrl(media.storageKey, {
+        contentType: media.mimeType,
+        inline: INLINE_TYPES.has(baseMime),
+        expiresIn: this.config.MEDIA_URL_TTL_SECONDS,
+      });
+      res.setHeader('cache-control', 'private, no-store');
+      res.redirect(302, url);
+      return;
+    }
     const file = await this.storage.get(media.storageKey);
     if (!file) throw new NotFoundException('This attachment is not available.');
     const baseType = file.contentType.split(';')[0]?.trim() ?? '';

@@ -201,9 +201,11 @@ export async function retrievePassages(
   const p = schema.knowledgePassages;
   const distance = sql<number>`${p.embedding} <=> ${JSON.stringify(vector)}::vector`;
 
+  // Only vectors from the same model are comparable (D-093).
   const semantic = await tx
     .select({ id: p.id, similarity: sql<number>`1 - (${distance})` })
     .from(p)
+    .where(eq(p.embeddingModel, embedder.model))
     .orderBy(distance)
     .limit(CANDIDATES);
 

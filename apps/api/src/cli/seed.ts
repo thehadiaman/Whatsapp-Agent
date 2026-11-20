@@ -1,5 +1,5 @@
 import { createDb } from '@app/db';
-import { LocalDiskStorage } from '@app/pipeline';
+import { embedderFor, pipelineEnvSchema, storageFor } from '@app/pipeline';
 import {
   DEMO_DEFAULT_PASSWORD,
   DEMO_PLATFORM_ADMIN,
@@ -24,9 +24,10 @@ const env = parseEnv(
       SEED_PASSWORD: z.string().min(12).optional(),
       /** Extra generated conversations for Qamar, to see the long-list state. */
       SEED_BULK_CONVERSATIONS: z.coerce.number().int().min(0).max(2000).default(0),
-      /** Where the seeded knowledge files go; the same directory the API and worker use. */
-      MEDIA_STORAGE_DIR: z.string().default('.data/media'),
     })
+    // Storage and embedder as the API and worker build them: local disk and the
+    // mock offline; S3 and Cohere in live mode, so seeded knowledge is searchable.
+    .extend(pipelineEnvSchema.shape)
     .refine((e) => e.NODE_ENV !== 'production' || e.SEED_PASSWORD !== undefined, {
       message: 'SEED_PASSWORD is required in production',
       path: ['SEED_PASSWORD'],
@@ -41,11 +42,11 @@ try {
   for (const tenant of demoTenants(password)) {
     await upsertTenant(db, tenant);
   }
-  const storage = new LocalDiskStorage(env.MEDIA_STORAGE_DIR);
+  const storage = storageFor(env);
   // History first, so on a new database older conversations get lower numbers.
   await seedHistory(db);
   await seedConversations(db, storage, { bulk: env.SEED_BULK_CONVERSATIONS });
-  await seedKnowledge(db, storage);
+  await seedKnowledge(db, storage, { embedder: embedderFor(env) });
   console.log('seed: demo tenants, users, conversations, history, knowledge and orders ready');
 } finally {
   await close();

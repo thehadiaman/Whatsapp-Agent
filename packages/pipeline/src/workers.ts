@@ -21,6 +21,27 @@ import {
 } from './queues.js';
 import { failTranscript, transcribeVoiceNote } from './voice.js';
 
+/** Queues every knowledge source whose passages another embedding model made. */
+export async function requeueStaleEmbeddings(deps: PipelineDeps): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const result = await deps.db.execute<{ tenant_id: string; source_id: string; version: number }>(
+      sql`select tenant_id, source_id, version from requeue_stale_embeddings(${deps.assistant.embedder.model}, 100)`,
+    );
+    for (const row of result.rows) {
+      await enqueueKnowledge(deps.queues, {
+        tenantId: row.tenant_id,
+        sourceId: row.source_id,
+        version: row.version,
+      });
+    }
+    total += result.rows.length;
+    if (result.rows.length < 100) break;
+  }
+  if (total > 0) deps.logger.info({ sources: total }, 'knowledge queued for re-embedding');
+  return total;
+}
+
 export interface RunningWorkers {
   close(): Promise<void>;
   /** Runs one sweep now (tests). */
@@ -128,6 +149,11 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
       });
     });
   }
+
+  // Knowledge embedded by another model is re-read with this one (D-093).
+  void requeueStaleEmbeddings(deps).catch((error: unknown) => {
+    log.error({ err: error }, 'could not queue knowledge for re-embedding');
+  });
 
   const sweepAfter = options.sweepAfterSeconds ?? 30;
   const sweep = async () => {
