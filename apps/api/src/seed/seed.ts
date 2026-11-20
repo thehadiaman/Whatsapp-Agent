@@ -104,16 +104,16 @@ const open = (from: string, to: string) => ({ open: from, close: to });
 
 /** Each demo business's settings when it is created (owners change them after). */
 const DEMO_SETTINGS: Record<string, Partial<typeof schema.tenants.$inferInsert>> = {
-  // Karama, Dubai: open every day; Friday opens after the midday prayer.
+  // Karama, Dubai: as its FAQ says, every day 10 am to 11 pm, Friday from 2 pm.
   'qamar-phone-corner': {
     openingHours: {
-      mon: open('10:00', '22:00'),
-      tue: open('10:00', '22:00'),
-      wed: open('10:00', '22:00'),
-      thu: open('10:00', '22:00'),
-      fri: open('14:00', '22:00'),
-      sat: open('10:00', '22:00'),
-      sun: open('12:00', '22:00'),
+      mon: open('10:00', '23:00'),
+      tue: open('10:00', '23:00'),
+      wed: open('10:00', '23:00'),
+      thu: open('10:00', '23:00'),
+      fri: open('14:00', '23:00'),
+      sat: open('10:00', '23:00'),
+      sun: open('10:00', '23:00'),
     },
     assistantTone: 'warm',
     escalationKeywords: ['refund', 'complaint', 'police', 'استرداد', 'शिकायत'],
@@ -123,15 +123,15 @@ const DEMO_SETTINGS: Record<string, Partial<typeof schema.tenants.$inferInsert>>
       hi: 'reopen_conversation_hi',
     },
   },
-  // Kochi: a home bakery, closed on Sundays.
+  // Kochi: a home bakery, pickup 10 am to 8 pm as its FAQ says, closed on Sundays.
   'kayal-bakes': {
     openingHours: {
-      mon: open('09:00', '20:00'),
-      tue: open('09:00', '20:00'),
-      wed: open('09:00', '20:00'),
-      thu: open('09:00', '20:00'),
-      fri: open('09:00', '20:00'),
-      sat: open('09:00', '20:00'),
+      mon: open('10:00', '20:00'),
+      tue: open('10:00', '20:00'),
+      wed: open('10:00', '20:00'),
+      thu: open('10:00', '20:00'),
+      fri: open('10:00', '20:00'),
+      sat: open('10:00', '20:00'),
       sun: null,
     },
     assistantTone: 'warm',
