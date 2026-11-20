@@ -17,6 +17,7 @@ import { API_CONFIG, trustedOrigin, type ApiConfig } from '../config.js';
 import { AUTH, DB, LOGGER } from '../infra/tokens.js';
 
 const room = (tenantId: string) => `tenant:${tenantId}`;
+const userRoom = (userId: string) => `user:${userId}`;
 
 interface SocketData {
   tenantId: string;
@@ -112,7 +113,16 @@ export class InboxGateway implements OnGatewayInit, OnGatewayConnection, OnModul
 
   async handleConnection(socket: Socket): Promise<void> {
     const data = socket.data as SocketData;
-    await socket.join(room(data.tenantId));
+    await socket.join([room(data.tenantId), userRoom(data.userId)]);
+  }
+
+  /**
+   * Closes a removed person's live connections at once. Their session is
+   * already gone, so they cannot reconnect. One API instance (the hosting
+   * plan); several would need the Socket.IO Redis adapter for this to reach all.
+   */
+  disconnectUser(userId: string): void {
+    this.server.in(userRoom(userId)).disconnectSockets(true);
   }
 
   async onModuleDestroy(): Promise<void> {

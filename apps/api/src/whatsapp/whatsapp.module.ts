@@ -17,5 +17,6 @@ import { WhatsAppWebhookController } from './webhook.controller.js';
     MediaController,
   ],
   providers: [InboxGateway],
+  exports: [InboxGateway],
 })
 export class WhatsAppModule {}

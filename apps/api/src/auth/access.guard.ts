@@ -76,7 +76,22 @@ export class AccessGuard implements CanActivate {
       );
     }
 
-    if (level === 'public') return true;
+    if (level === 'public') {
+      // No user yet: a route's own limit counts by address (behind the web
+      // proxy that is one address, so it acts as a ceiling for the route).
+      const publicLimit = this.reflector.getAllAndOverride<RouteLimit | undefined>(RATE_LIMIT_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (publicLimit) {
+        await this.rateLimiter.consume(
+          `ip:${request.ip ?? 'unknown'}`,
+          publicLimit,
+          context.switchToHttp().getResponse<Response>(),
+        );
+      }
+      return true;
+    }
 
     const session = await this.auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
     if (!session) {
