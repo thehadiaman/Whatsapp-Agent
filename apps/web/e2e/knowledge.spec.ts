@@ -25,7 +25,10 @@ test.describe('the knowledge base', () => {
     await page.getByRole('link', { name: 'Knowledge' }).click();
     await expect(sources(page).getByText('Price list November.csv')).toBeVisible();
 
-    const question = `Do you sell refurbished phones? (${String(Date.now())})`;
+    // A word no earlier run used: repeated runs leave their FAQs behind, and
+    // the keyword half of retrieval must single this one out.
+    const token = `refurb${Date.now().toString(36)}`;
+    const question = `Do you sell refurbished phones (${token})?`;
     await page.getByRole('button', { name: 'Add source ▾' }).click();
     await page.getByRole('menuitem', { name: 'Add an FAQ' }).click();
     await page.getByLabel('Question', { exact: true }).fill(question);
@@ -36,7 +39,7 @@ test.describe('the knowledge base', () => {
     await expect(page.getByRole('heading', { name: question })).toBeVisible();
     await expect(page.getByRole('status')).toHaveText('Ready · 1 passage', { timeout: 15_000 });
 
-    await tryQuestion(page, 'refurbished phones');
+    await tryQuestion(page, `refurbished phones ${token}`);
     await expect(page.getByText('The assistant would read:')).toBeVisible();
     await expect(page.getByRole('button', { name: question })).toBeVisible();
   });
