@@ -6,7 +6,14 @@ import { NotFoundError } from './conversations.js';
 import { recordDeadLetter } from './dead-letters.js';
 import { nowOf, type PipelineDeps } from './deps.js';
 import { QUEUES, tenantMessageJobSchema } from './queues.js';
-import { decideSend, maySend, nextStatus, windowState, type MessageStatus } from './rules.js';
+import {
+  assistantMessageMayGo,
+  decideSend,
+  maySend,
+  nextStatus,
+  windowState,
+  type MessageStatus,
+} from './rules.js';
 import { applyStatusEvents } from './statuses.js';
 
 export type Sender = { type: 'assistant' } | { type: 'user'; userId: string };
@@ -137,7 +144,7 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
       .where(eq(schema.conversations.id, message.conversationId));
     if (!conversation) return { kind: 'skip', reason: 'conversation not found' };
 
-    if (message.senderType === 'assistant' && conversation.state !== 'assistant') {
+    if (message.senderType === 'assistant' && !assistantMessageMayGo(conversation.state)) {
       await tx
         .update(schema.messages)
         .set({ status: 'cancelled', statusAt: now })

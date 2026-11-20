@@ -123,6 +123,17 @@ export function canTransition(from: ConversationState, to: ConversationState): b
   return ALLOWED[from].includes(to);
 }
 
+/**
+ * Whether an assistant message already queued may still go out. A person
+ * holding (or having closed) the conversation cancels it: the assistant never
+ * sends while a human holds it (brief §4). While the conversation only waits
+ * for a person, the assistant's last word, usually "a person will reply here
+ * soon", still goes out.
+ */
+export function assistantMessageMayGo(state: ConversationState): boolean {
+  return state === 'assistant' || state === 'waiting_for_human';
+}
+
 /** Who may send into a conversation right now. */
 export function maySend(
   state: ConversationState,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canTransition,
   decideSend,
+  assistantMessageMayGo,
   maySend,
   nextStatus,
   windowState,
@@ -123,5 +124,15 @@ describe('conversation ownership', () => {
     expect(maySend('human', 'u1', { type: 'user', userId: 'u1' })).toBe(true);
     expect(maySend('human', 'u1', { type: 'user', userId: 'u2' })).toBe(false);
     expect(maySend('assistant', null, { type: 'user', userId: 'u1' })).toBe(false);
+  });
+});
+
+describe('assistantMessageMayGo', () => {
+  it('cancels a queued assistant message once a person holds or closed the conversation', () => {
+    expect(assistantMessageMayGo('assistant')).toBe(true);
+    // The handoff notice is queued just before the move to waiting; it must still go out.
+    expect(assistantMessageMayGo('waiting_for_human')).toBe(true);
+    expect(assistantMessageMayGo('human')).toBe(false);
+    expect(assistantMessageMayGo('closed')).toBe(false);
   });
 });
