@@ -233,10 +233,13 @@ export async function retrievePassages(
     fused.set(row.id, entry);
   });
 
+  // Fusion picks which passages; they are then read most similar first, so
+  // the order and the scores shown with them agree.
   const chosen = [...fused.entries()]
     .filter(([, e]) => e.similarity >= embedder.relevanceFloor || e.keyword)
     .sort(([, a], [, b]) => b.rrf - a.rrf)
-    .slice(0, limit);
+    .slice(0, limit)
+    .sort(([, a], [, b]) => b.similarity - a.similarity);
   if (chosen.length === 0) return [];
 
   const rows = await tx
