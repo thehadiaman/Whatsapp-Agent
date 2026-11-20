@@ -308,6 +308,49 @@ export function createSimulator(options: SimulatorOptions): Simulator {
       res.status(404).json({ error: error instanceof Error ? error.message : 'unknown' });
     }
   });
+  // Load tests bring their own number and customers, apart from the demo ones.
+  control.post('/businesses', (req, res) => {
+    const parsed = z
+      .object({
+        phoneNumberId: z.string().regex(/^\d{5,25}$/),
+        displayPhoneNumber: z.string().min(3).max(30),
+        name: z.string().min(1).max(80),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map((i) => i.message) });
+      return;
+    }
+    state.businesses.set(parsed.data.phoneNumberId, parsed.data);
+    res.status(201).json(parsed.data);
+  });
+  control.post('/customers', (req, res) => {
+    const parsed = z
+      .array(
+        z.object({
+          name: z.string().min(1).max(80),
+          bsuid: z.string().min(3).max(80),
+          waId: z
+            .string()
+            .regex(/^\d{6,20}$/)
+            .nullable(),
+          businessPhoneNumberId: z.string(),
+        }),
+      )
+      .min(1)
+      .max(2_000)
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map((i) => i.message) });
+      return;
+    }
+    if (parsed.data.some((c) => !state.businesses.has(c.businessPhoneNumberId))) {
+      res.status(404).json({ error: 'unknown business' });
+      return;
+    }
+    res.status(201).json(parsed.data.map((c) => state.addCustomer(c)));
+  });
+
   // The page plays voice notes from here (the Graph download needs the token).
   control.get('/media/:mediaId', (req, res) => {
     const media = state.media.get(req.params.mediaId);

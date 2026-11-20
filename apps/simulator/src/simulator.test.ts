@@ -240,6 +240,41 @@ describe('voice notes', () => {
   });
 });
 
+describe('control API', () => {
+  it('adds a business and its customers, who can then write in', async () => {
+    const url = await start();
+    const business = await fetch(`${url}/control/businesses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        phoneNumberId: '100000000000099',
+        displayPhoneNumber: '+971 4 000 0099',
+        name: 'Load test',
+      }),
+    });
+    expect(business.status).toBe(201);
+    const added = await fetch(`${url}/control/customers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([
+        { name: 'L1', bsuid: 'AE.L1', waId: null, businessPhoneNumberId: '100000000000099' },
+      ]),
+    });
+    expect(added.status).toBe(201);
+    sim.sendInbound([{ customerId: 'AE.L1', type: 'text', text: 'hi' }]);
+    await sim.idle();
+    expect(JSON.parse(received.at(-1)!.body)).toMatchObject({
+      entry: [{ changes: [{ value: { metadata: { phone_number_id: '100000000000099' } } }] }],
+    });
+    const unknown = await fetch(`${url}/control/customers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([{ name: 'X', bsuid: 'AE.X', waId: null, businessPhoneNumberId: '1' }]),
+    });
+    expect(unknown.status).toBe(404);
+  });
+});
+
 describe('faults', () => {
   it('duplicate delivery sends every webhook twice', async () => {
     await start({ faults: { duplicateRate: 1 } });
