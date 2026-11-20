@@ -208,6 +208,9 @@ importers:
       '@app/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@app/voice':
+        specifier: workspace:*
+        version: link:../../packages/voice
       '@app/whatsapp':
         specifier: workspace:*
         version: link:../../packages/whatsapp
@@ -302,6 +305,9 @@ importers:
       '@app/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@app/voice':
+        specifier: workspace:*
+        version: link:../../packages/voice
       '@app/whatsapp':
         specifier: workspace:*
         version: link:../../packages/whatsapp
@@ -481,6 +487,9 @@ importers:
       '@app/shared':
         specifier: workspace:*
         version: link:../shared
+      '@app/voice':
+        specifier: workspace:*
+        version: link:../voice
       '@app/whatsapp':
         specifier: workspace:*
         version: link:../whatsapp
@@ -533,6 +542,21 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  packages/voice:
     devDependencies:
       '@types/node':
         specifier: 24.19.2

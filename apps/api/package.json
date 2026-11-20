@@ -20,6 +20,7 @@
     "@app/db": "workspace:*",
     "@app/pipeline": "workspace:*",
     "@app/shared": "workspace:*",
+    "@app/voice": "workspace:*",
     "@app/whatsapp": "workspace:*",
     "@nestjs/common": "12.5.0",
     "@nestjs/core": "12.5.0",

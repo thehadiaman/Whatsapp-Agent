@@ -23,6 +23,7 @@
     "@app/assistant": "workspace:*",
     "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
+    "@app/voice": "workspace:*",
     "@app/whatsapp": "workspace:*",
     "bullmq": "6.7.6",
     "drizzle-orm": "0.45.4",
