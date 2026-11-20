@@ -5,9 +5,10 @@ import { MockEmbedder } from '@app/assistant';
 import { createDb, schema, withTenant, type DbHandle } from '@app/db';
 import { testDatabaseUrls } from '@app/db/testing';
 import { LocalDiskStorage, retrievePassages } from '@app/pipeline';
-import { eq } from 'drizzle-orm';
+import { and, eq, like, ne } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seedConversations } from './conversations.js';
+import { seedHistory } from './history.js';
 import { seedKnowledge } from './knowledge.js';
 import { demoTenants, upsertTenant } from './seed.js';
 
@@ -29,8 +30,50 @@ beforeAll(async () => {
   for (const tenant of demoTenants('seed-test-password')) {
     tenantIds[tenant.slug] = await upsertTenant(migrator.db, tenant);
   }
+  await seedHistory(migrator.db);
   await seedConversations(migrator.db, storage, { bulk: 0 });
   await seedKnowledge(migrator.db, storage);
+});
+
+describe('demo history and settings', () => {
+  async function history(tenantId: string) {
+    return migrator.db
+      .select({ state: schema.conversations.state, bsuid: schema.customers.bsuid })
+      .from(schema.conversations)
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.conversations.customerId))
+      .where(
+        and(eq(schema.conversations.tenantId, tenantId), like(schema.customers.bsuid, 'HIST.%')),
+      );
+  }
+
+  it('gives each business four weeks of closed history, once, beside its scripted conversations', async () => {
+    for (const id of Object.values(tenantIds)) {
+      const rows = await history(id);
+      expect(rows.length).toBeGreaterThan(200);
+      expect(rows.every((r) => r.state === 'closed')).toBe(true);
+      // The scripted, open conversations were still seeded.
+      const open = await migrator.db
+        .select()
+        .from(schema.conversations)
+        .where(
+          and(eq(schema.conversations.tenantId, id), ne(schema.conversations.state, 'closed')),
+        );
+      expect(open.length).toBeGreaterThan(0);
+    }
+    const before = (await history(tenantIds['kayal-bakes']!)).length;
+    await seedHistory(migrator.db);
+    expect((await history(tenantIds['kayal-bakes']!)).length).toBe(before);
+  });
+
+  it('sets each business up with hours, escalation words and templates', async () => {
+    const [kayal] = await migrator.db
+      .select()
+      .from(schema.tenants)
+      .where(eq(schema.tenants.id, tenantIds['kayal-bakes']!));
+    expect(kayal?.openingHours?.sun).toBeNull();
+    expect(kayal?.escalationKeywords).toContain('പരാതി');
+    expect(kayal?.reopenTemplates).toMatchObject({ ml: 'reopen_conversation_ml' });
+  });
 });
 
 afterAll(async () => {

@@ -3,7 +3,7 @@ import { schema, type Database } from '@app/db';
 import { mediaKey, type ObjectStorage } from '@app/pipeline';
 import { mockVoiceNote, readOggOpus, VOICE_NOTE_MIME_TYPE, type SpokenLanguage } from '@app/voice';
 import { DEMO_BUSINESSES, DEMO_CUSTOMERS } from '@app/shared';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 /**
  * Realistic conversation history for the demo businesses: five languages,
@@ -524,10 +524,18 @@ export async function seedConversations(
       .from(schema.tenants)
       .where(eq(schema.tenants.slug, business.slug));
     if (!tenant) continue;
+    // Skip a business that has its scripted conversations already; the
+    // generated history (customers HIST.*) does not count.
     const [existing] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(schema.conversations)
-      .where(eq(schema.conversations.tenantId, tenant.id));
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.conversations.customerId))
+      .where(
+        and(
+          eq(schema.conversations.tenantId, tenant.id),
+          sql`coalesce(${schema.customers.bsuid}, '') not like 'HIST.%'`,
+        ),
+      );
     if ((existing?.n ?? 0) > 0) continue;
     const [channel] = await db
       .select()

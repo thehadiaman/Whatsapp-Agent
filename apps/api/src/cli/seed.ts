@@ -9,6 +9,7 @@ import {
 } from '@app/shared';
 import { z } from 'zod';
 import { seedConversations } from '../seed/conversations.js';
+import { seedHistory } from '../seed/history.js';
 import { seedKnowledge } from '../seed/knowledge.js';
 import { demoTenants, upsertTenant, upsertUser } from '../seed/seed.js';
 
@@ -41,9 +42,11 @@ try {
     await upsertTenant(db, tenant);
   }
   const storage = new LocalDiskStorage(env.MEDIA_STORAGE_DIR);
+  // History first, so on a new database older conversations get lower numbers.
+  await seedHistory(db);
   await seedConversations(db, storage, { bulk: env.SEED_BULK_CONVERSATIONS });
   await seedKnowledge(db, storage);
-  console.log('seed: demo tenants, users, conversations, knowledge and orders ready');
+  console.log('seed: demo tenants, users, conversations, history, knowledge and orders ready');
 } finally {
   await close();
 }
