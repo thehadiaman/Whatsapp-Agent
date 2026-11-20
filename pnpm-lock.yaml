@@ -420,6 +420,71 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  evals:
+    dependencies:
+      '@anthropic-ai/bedrock-sdk':
+        specifier: 1.1.2
+        version: 1.1.2(zod@4.6.7)
+      '@app/api':
+        specifier: workspace:*
+        version: link:../apps/api
+      '@app/assistant':
+        specifier: workspace:*
+        version: link:../packages/assistant
+      '@app/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      '@app/live':
+        specifier: workspace:*
+        version: link:../packages/live
+      '@app/pipeline':
+        specifier: workspace:*
+        version: link:../packages/pipeline
+      '@app/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
+      '@app/voice':
+        specifier: workspace:*
+        version: link:../packages/voice
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1)
+      ioredis:
+        specifier: 6.0.0
+        version: 6.0.0(supports-color@7.2.0)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  load:
+    dependencies:
+      '@app/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1)
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/assistant:
     dependencies:
       '@app/shared':

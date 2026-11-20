@@ -4,3 +4,8 @@ pnpm-lock.yaml
 **/coverage/
 # The brief is kept verbatim as the user wrote it.
 docs/BRIEF.md
+
+# Written by scripts (pnpm eval, pnpm load-test); regenerated, never edited.
+docs/EVALS.md
+docs/LOAD-TEST.md
+evals/results/

@@ -9,15 +9,19 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
     "build:packages": "pnpm --filter './packages/*' build",
+    "build:libs": "pnpm build:packages && pnpm --filter @app/api build",
     "build": "pnpm -r build",
     "dev": "pnpm build:packages && pnpm -r --parallel dev",
     "db:provision": "pnpm build:packages && pnpm --filter @app/db run provision",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "pnpm build:packages && NODE_OPTIONS=--max-old-space-size=4096 eslint . --max-warnings 0",
-    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "lint": "pnpm build:libs && NODE_OPTIONS=--max-old-space-size=4096 eslint . --max-warnings 0",
+    "typecheck": "pnpm build:libs && pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r test && scripts/commit-msg-check.test.sh",
-    "test:int": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test:int"
+    "test:int": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test:int",
+    "eval": "pnpm build:libs && pnpm --filter @app/evals build && pnpm --filter @app/evals run eval",
+    "eval:mock": "pnpm build:libs && pnpm --filter @app/evals build && pnpm --filter @app/evals run eval:mock",
+    "load-test": "pnpm build:packages && pnpm --filter @app/load build && pnpm --filter @app/load run load-test"
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",

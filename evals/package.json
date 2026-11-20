@@ -1,0 +1,32 @@
+{
+  "name": "@app/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "eval": "node dist/run.js --live",
+    "eval:mock": "node dist/run.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "1.1.2",
+    "@app/api": "workspace:*",
+    "@app/assistant": "workspace:*",
+    "@app/db": "workspace:*",
+    "@app/live": "workspace:*",
+    "@app/pipeline": "workspace:*",
+    "@app/shared": "workspace:*",
+    "@app/voice": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "ioredis": "6.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}

@@ -12,7 +12,7 @@ export
 # from the repository root once, here.
 MEDIA_STORAGE_DIR := $(abspath $(or $(MEDIA_STORAGE_DIR),.data/media))
 
-.PHONY: help setup infra db dev check test test-int e2e images up down reset
+.PHONY: help setup infra db dev check test test-int e2e eval eval-mock load-test images up down reset
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -43,6 +43,15 @@ test-int: infra ## Integration tests against the Compose Postgres and Redis
 
 e2e: db ## Playwright end-to-end tests at 1440 and 390 px (builds every app first)
 	pnpm build && pnpm --filter @app/web run e2e
+
+eval: infra ## Evals against live Bedrock: needs AWS credentials, costs money (docs/EVALS.md)
+	pnpm eval
+
+eval-mock: infra ## The same evals offline, with the mock model: checks the machinery, not quality
+	pnpm eval:mock
+
+load-test: ## 1,000 messages with faults into a running stack (start make dev first; docs/LOAD-TEST.md)
+	pnpm load-test
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build

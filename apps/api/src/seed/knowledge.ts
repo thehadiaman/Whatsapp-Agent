@@ -322,11 +322,31 @@ export async function seedKnowledge(
       .where(eq(schema.knowledgeSources.tenantId, tenant.id));
     if ((existing?.n ?? 0) > 0) continue;
 
-    await db
-      .update(schema.tenants)
-      .set({ assistantSummary: knowledge.summary })
-      .where(eq(schema.tenants.id, tenant.id));
-    await seedSources(db, storage, tenant.id, knowledge, options.embedder ?? new MockEmbedder());
-    await seedOrders(db, tenant.id, ORDERS[business.slug] ?? [], now);
+    await seedBusinessKnowledge(db, storage, {
+      tenantId: tenant.id,
+      slug: business.slug,
+      embedder: options.embedder ?? new MockEmbedder(),
+      now,
+    });
   }
+}
+
+/**
+ * One demo business's summary, knowledge and orders, into any tenant (the
+ * evals load them into their own businesses). Orders attach to customers
+ * already in that tenant with the demo customers' BSUIDs.
+ */
+export async function seedBusinessKnowledge(
+  db: Database,
+  storage: ObjectStorage,
+  input: { tenantId: string; slug: string; embedder: Embedder; now: number },
+): Promise<void> {
+  const knowledge = KNOWLEDGE[input.slug];
+  if (!knowledge) throw new Error(`seed: no knowledge for ${input.slug}`);
+  await db
+    .update(schema.tenants)
+    .set({ assistantSummary: knowledge.summary })
+    .where(eq(schema.tenants.id, input.tenantId));
+  await seedSources(db, storage, input.tenantId, knowledge, input.embedder);
+  await seedOrders(db, input.tenantId, ORDERS[input.slug] ?? [], input.now);
 }

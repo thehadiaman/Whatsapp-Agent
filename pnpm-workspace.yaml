@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  - evals
+  - load
 
 # Supply-chain guard: refuse versions published less than two days ago, so a
 # compromised release has time to be caught and yanked before we install it.
