@@ -344,6 +344,8 @@ export interface StoredMedia {
   /** Set once the file is copied into object storage: `tenants/{tenantId}/media/{messageId}`. */
   storageKey?: string;
   sizeBytes?: number;
+  /** Audio length, read from an Ogg Opus file when it is stored. */
+  durationMs?: number;
 }
 
 export type StoredTranscript =

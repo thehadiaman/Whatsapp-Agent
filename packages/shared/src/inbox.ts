@@ -69,6 +69,8 @@ export const timelineMessageSchema = z.object({
       voice: z.boolean(),
       /** True once the file is in our storage and can be fetched from /api/media/:id. */
       available: z.boolean(),
+      /** Voice notes: length in milliseconds, when known. */
+      durationMs: z.number().int().nullable(),
     })
     .nullable(),
   /** Inbound voice notes: the speech-to-text result, shown beside the player. */

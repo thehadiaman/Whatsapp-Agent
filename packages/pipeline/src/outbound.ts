@@ -379,6 +379,7 @@ async function voiceContent(
     voice: true,
     storageKey: key,
     sizeBytes: audio.bytes.byteLength,
+    ...(durationMs === undefined ? {} : { durationMs }),
   };
   await withTenant(deps.db, tenantId, (tx) =>
     tx

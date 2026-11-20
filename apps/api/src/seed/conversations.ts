@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { schema, type Database } from '@app/db';
 import { mediaKey, type ObjectStorage } from '@app/pipeline';
-import { mockVoiceNote, VOICE_NOTE_MIME_TYPE, type SpokenLanguage } from '@app/voice';
+import { mockVoiceNote, readOggOpus, VOICE_NOTE_MIME_TYPE, type SpokenLanguage } from '@app/voice';
 import { DEMO_BUSINESSES, DEMO_CUSTOMERS } from '@app/shared';
 import { eq, sql } from 'drizzle-orm';
 
@@ -323,6 +323,7 @@ async function writeScript(
           voice: true,
           storageKey: key,
           sizeBytes: bytes.byteLength,
+          durationMs: readOggOpus(bytes).durationMs,
         },
         transcript: {
           status: 'done',

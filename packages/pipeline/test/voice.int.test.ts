@@ -137,6 +137,8 @@ describe('voice notes in', () => {
     expect(note).toMatchObject({ kind: 'audio', body: null });
     expect(note!.media).toMatchObject({ voice: true, mimeType: 'audio/ogg; codecs=opus' });
     expect(note!.media!.storageKey).toMatch(/^tenants\/.+\/media\//);
+    // Its length is read from the file, so the inbox can show it before playing.
+    expect(note!.media!.durationMs).toBeGreaterThan(1_000);
     expect(note!.transcript).toEqual({
       status: 'done',
       text: 'Do you make eggless cakes?',

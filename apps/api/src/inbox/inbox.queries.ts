@@ -187,6 +187,7 @@ export async function conversationDetail(
             filename: m.media.filename ?? null,
             voice: m.media.voice ?? false,
             available: Boolean(m.media.storageKey),
+            durationMs: m.media.durationMs ?? null,
           }
         : null,
       transcript: transcriptView(m.transcript),

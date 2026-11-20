@@ -2,8 +2,18 @@ import { schema, withTenant } from '@app/db';
 import type { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import type { PipelineDeps } from './deps.js';
+import { readOggOpus } from '@app/voice';
 import { enqueueTranscription, tenantMessageJobSchema } from './queues.js';
 import { mediaKey } from './storage.js';
+
+/** The inbox shows a voice note's length before it is played. Not Ogg Opus: unknown. */
+function audioLength(bytes: Uint8Array): { durationMs?: number } {
+  try {
+    return { durationMs: readOggOpus(bytes).durationMs };
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Copies an inbound image, document or voice note into our own storage.
@@ -48,7 +58,14 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
   await withTenant(deps.db, tenantId, (tx) =>
     tx
       .update(schema.messages)
-      .set({ media: { ...target.media, storageKey: key, sizeBytes: file.bytes.byteLength } })
+      .set({
+        media: {
+          ...target.media,
+          storageKey: key,
+          sizeBytes: file.bytes.byteLength,
+          ...(target.kind === 'audio' ? audioLength(file.bytes) : {}),
+        },
+      })
       .where(eq(schema.messages.id, messageId)),
   );
   deps.logger.info({ messageId, sizeBytes: file.bytes.byteLength }, 'inbound media stored');
