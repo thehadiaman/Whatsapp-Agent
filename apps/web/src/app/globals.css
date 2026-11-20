@@ -169,6 +169,17 @@
     background: transparent;
   }
 
+  /* Analytics custody chart: the inbox's three marks, drawn as bars. */
+  .chart-assistant {
+    background: repeating-linear-gradient(90deg, var(--color-graphite) 0 2px, transparent 2px 5px);
+  }
+  .chart-person {
+    background: var(--color-ballpoint);
+  }
+  .chart-waiting {
+    background: repeating-linear-gradient(45deg, var(--color-stamp) 0 2px, transparent 2px 4px);
+  }
+
   /* Stamp colours follow the holder; filled when it is you. */
   .stamp-assistant {
     color: var(--color-graphite);

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { apiGet } from '../../lib/server-api';
 import { ConnectionStatus } from './connection-status';
 import { SectionNav } from './section-nav';
+import { SectionShortcuts } from './section-shortcuts';
 import { SignOutButton } from './sign-out-button';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,8 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
     ? [
         { href: '/inbox', label: 'Inbox' },
         { href: '/knowledge', label: 'Knowledge' },
+        { href: '/analytics', label: 'Analytics' },
+        { href: '/settings', label: 'Settings' },
       ]
     : [{ href: '/admin', label: 'Businesses' }];
 
@@ -29,6 +32,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           {membership?.tenantName ?? 'Platform admin'}
         </span>
         <SectionNav sections={sections} />
+        {membership ? <SectionShortcuts /> : null}
         <div className="ml-auto flex items-center gap-3">
           {membership ? <ConnectionStatus /> : null}
           <span className="hidden text-list sm:inline">{user.name}</span>

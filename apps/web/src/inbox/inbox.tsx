@@ -25,6 +25,7 @@ const SHORTCUTS: [string, string][] = [
   ['N', 'Add internal note'],
   ['E', "Explain the assistant's latest reply"],
   ['Esc', 'Back to the list (narrow screens)'],
+  ['g i / g k / g a / g s', 'Inbox, knowledge, analytics, settings'],
   ['?', 'Show these shortcuts'],
 ];
 
