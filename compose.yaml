@@ -17,8 +17,9 @@ x-app-env: &app-env
   SIMULATOR_ACCESS_TOKEN: sim-access-token-dev
   SIMULATOR_APP_SECRET: sim-app-secret-dev
   SIMULATOR_VERIFY_TOKEN: sim-verify-token-dev
-  # Mock-mode media; the app directory is not writable by the node user. Live mode uses S3.
-  MEDIA_STORAGE_DIR: /tmp/desk-media
+  # Mock-mode media and knowledge files, on a volume the API, worker and seed share.
+  # Live mode uses S3.
+  MEDIA_STORAGE_DIR: /data/media
 
 services:
   postgres:
@@ -55,6 +56,8 @@ services:
       context: .
       dockerfile: docker/service.Dockerfile
       args: { APP: api }
+    volumes:
+      - media:/data/media
     environment:
       <<: *app-env
       DATABASE_SUPERUSER_URL: postgres://postgres:postgres@postgres:5432/app
@@ -71,6 +74,8 @@ services:
       context: .
       dockerfile: docker/service.Dockerfile
       args: { APP: api }
+    volumes:
+      - media:/data/media
     environment:
       <<: *app-env
       API_PORT: '4000'
@@ -99,6 +104,8 @@ services:
       context: .
       dockerfile: docker/service.Dockerfile
       args: { APP: worker }
+    volumes:
+      - media:/data/media
     environment:
       <<: *app-env
     depends_on:
@@ -171,3 +178,4 @@ services:
 
 volumes:
   pgdata:
+  media:

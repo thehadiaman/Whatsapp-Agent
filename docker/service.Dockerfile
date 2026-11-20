@@ -28,5 +28,7 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
+# Mount point for the shared media volume; a new named volume takes this ownership.
+RUN mkdir -p /data/media && chown node:node /data/media
 USER node
 CMD ["node", "dist/main.js"]

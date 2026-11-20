@@ -7,6 +7,11 @@ SHELL := /bin/bash
 -include .env
 export
 
+# Every app runs from its own folder (pnpm --filter), so a relative storage
+# path would give the API and the worker different directories. Resolve it
+# from the repository root once, here.
+MEDIA_STORAGE_DIR := $(abspath $(or $(MEDIA_STORAGE_DIR),.data/media))
+
 .PHONY: help setup infra db dev check test test-int e2e images up down reset
 
 help: ## List targets
