@@ -2,6 +2,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Readable } from 'node:stream';
+import {
+  mockVoiceNote,
+  readMockVoiceNote,
+  SPOKEN_LANGUAGES,
+  VOICE_NOTE_MIME_TYPE,
+} from '@app/voice';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { WebhookDispatcher } from './dispatcher.js';
@@ -67,8 +73,11 @@ const sendSchema = z
 
 const inboundRequestSchema = z.object({
   customerId: z.string(),
-  type: z.enum(['text', 'image', 'document']).default('text'),
+  type: z.enum(['text', 'image', 'document', 'audio']).default('text'),
+  /** For a voice note: what the customer says (the mock transcript). */
   text: z.string().max(4096).optional(),
+  /** For a voice note: the language spoken. */
+  language: z.enum(SPOKEN_LANGUAGES).optional(),
   caption: z.string().max(1024).optional(),
   filename: z.string().max(200).optional(),
   /** Base64 file content; a tiny placeholder is used when absent. */
@@ -180,11 +189,21 @@ export function createSimulator(options: SimulatorOptions): Simulator {
       if (request.type === 'text') {
         item = { customer, wamid: id, at, type: 'text', text: request.text ?? '' };
       } else {
+        // A voice note is recorded on the phone: the words travel inside it.
         const bytes = request.dataBase64
           ? Buffer.from(request.dataBase64, 'base64')
-          : PLACEHOLDER_PNG;
+          : request.type === 'audio'
+            ? Buffer.from(
+                mockVoiceNote({ text: request.text ?? '', language: request.language ?? 'en' }),
+              )
+            : PLACEHOLDER_PNG;
         const mimeType =
-          request.mimeType ?? (request.type === 'image' ? 'image/png' : 'application/pdf');
+          request.mimeType ??
+          (request.type === 'image'
+            ? 'image/png'
+            : request.type === 'audio'
+              ? VOICE_NOTE_MIME_TYPE
+              : 'application/pdf');
         const sha256 = createHash('sha256').update(bytes).digest('base64');
         const media = state.storeMedia(new Uint8Array(bytes), mimeType, sha256);
         item = {
@@ -195,13 +214,17 @@ export function createSimulator(options: SimulatorOptions): Simulator {
           media: { id: media.id, mimeType, sha256 },
           ...(request.caption ? { caption: request.caption } : {}),
           ...(request.filename ? { filename: request.filename } : {}),
+          ...(request.type === 'audio' ? { voice: true } : {}),
         };
       }
       state.thread(customer.id).push({
         wamid: id,
         direction: 'in',
         type: request.type,
-        text: request.type === 'text' ? (request.text ?? '') : (request.caption ?? null),
+        text:
+          request.type === 'text' || request.type === 'audio'
+            ? (request.text ?? '')
+            : (request.caption ?? null),
         mediaId: item.type === 'text' ? null : item.media.id,
         status: null,
         at,
@@ -285,6 +308,15 @@ export function createSimulator(options: SimulatorOptions): Simulator {
       res.status(404).json({ error: error instanceof Error ? error.message : 'unknown' });
     }
   });
+  // The page plays voice notes from here (the Graph download needs the token).
+  control.get('/media/:mediaId', (req, res) => {
+    const media = state.media.get(req.params.mediaId);
+    if (!media) {
+      res.status(404).json({ error: 'unknown media' });
+      return;
+    }
+    res.type(media.mimeType).send(Buffer.from(media.bytes));
+  });
   control.post('/read/:customerId', (req, res) => {
     const customer = state.customers.get(req.params.customerId);
     if (!customer) {
@@ -365,11 +397,20 @@ export function createSimulator(options: SimulatorOptions): Simulator {
       graphError(res, 400, 131047, 'Re-engagement message');
       return;
     }
+    if (body.type === 'audio' && body.audio && !state.media.has(body.audio.id)) {
+      graphError(res, 400, 131053, 'Media upload error: unknown media ID.');
+      return;
+    }
+    // What a business voice note says, as the customer would hear it.
+    const spoken = body.audio
+      ? readMockVoiceNote(state.media.get(body.audio.id)?.bytes ?? new Uint8Array())?.text
+      : undefined;
     const message: ThreadMessage = {
       wamid: wamid(),
       direction: 'out',
       type: body.type,
-      text: body.text?.body ?? (body.template ? `[template ${body.template.name}]` : null),
+      text:
+        body.text?.body ?? spoken ?? (body.template ? `[template ${body.template.name}]` : null),
       mediaId: body.audio?.id ?? null,
       status: 'accepted',
       at: Date.now(),

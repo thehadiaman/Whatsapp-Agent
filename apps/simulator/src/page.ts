@@ -30,8 +30,10 @@ export function simulatorPage(): string {
   .msg.out { align-self:flex-start; background:var(--thermal); }
   .msg .meta { display:block; color:var(--graphite); margin-top:2px; }
   .msg.failed .meta { color:var(--stamp); }
-  form { display:flex; gap:8px; padding:8px; border-top:1px solid var(--rule); }
-  input[type=text] { flex:1; padding:8px; border:1px solid var(--rule-strong); border-radius:4px; font:inherit; }
+  form { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border-top:1px solid var(--rule); }
+  input[type=text] { flex:1 1 100%; padding:8px; border:1px solid var(--rule-strong); border-radius:4px; font:inherit; }
+  select { padding:8px; border:1px solid var(--rule-strong); border-radius:4px; font:inherit; background:var(--sheet); color:inherit; }
+  #compose button.primary { margin-left:auto; }
   button.action { padding:8px 12px; border-radius:4px; border:1px solid var(--rule-strong); background:var(--sheet); font:inherit; font-weight:600; cursor:pointer; }
   button.primary { background:var(--ballpoint); color:#fff; border-color:var(--ballpoint); }
   .faults label { display:grid; grid-template-columns: 1fr 64px; gap:8px; padding:6px 12px; align-items:center; }
@@ -50,6 +52,9 @@ export function simulatorPage(): string {
     <form id="compose">
       <label class="mono" for="text" style="position:absolute;left:-9999px">Message</label>
       <input id="text" type="text" dir="auto" autocomplete="off" placeholder="Write as the customer…" disabled>
+      <label class="mono" for="lang" style="position:absolute;left:-9999px">Language spoken</label>
+      <select id="lang" disabled><option value="en">English</option><option value="hi">Hindi</option><option value="ml">Malayalam</option><option value="ar">Arabic</option></select>
+      <button class="action" type="button" id="voice" disabled title="Sends the text as a voice note in the chosen language">Send as voice note</button>
       <button class="action" type="button" id="image" disabled>Send photo</button>
       <button class="action primary" type="submit" disabled>Send</button>
     </form>
@@ -96,9 +101,14 @@ async function renderThread() {
   const t = $('thread'); t.textContent = '';
   for (const m of messages) {
     const d = document.createElement('div'); d.className = 'msg ' + m.direction + (m.status === 'failed' ? ' failed' : '');
-    d.dir = 'auto'; d.textContent = m.text ?? '[' + m.type + ']';
+    d.dir = 'auto';
+    if (m.type === 'audio' && m.mediaId) {
+      const a = document.createElement('audio'); a.controls = true; a.src = '/control/media/' + encodeURIComponent(m.mediaId); a.style.maxWidth = '100%';
+      const said = document.createElement('span'); said.textContent = m.text ? '“' + m.text + '”' : '';
+      d.append(a, document.createElement('br'), said);
+    } else d.textContent = m.text ?? '[' + m.type + ']';
     const meta = document.createElement('span'); meta.className = 'meta mono';
-    meta.textContent = new Date(m.at).toLocaleTimeString() + (m.direction === 'out' ? ' · from business · ' + m.status : ' · you');
+    meta.textContent = new Date(m.at).toLocaleTimeString() + (m.type === 'audio' ? ' · voice note' : '') + (m.direction === 'out' ? ' · from business · ' + m.status : ' · you');
     d.append(meta); t.append(d);
   }
   t.scrollTop = t.scrollHeight;
@@ -107,6 +117,11 @@ $('compose').onsubmit = async (e) => {
   e.preventDefault(); const text = $('text').value.trim(); if (!text || !current) return;
   $('text').value = '';
   await fetch('/control/messages', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ customerId: current, text }) });
+};
+$('voice').onclick = async () => {
+  const text = $('text').value.trim(); if (!text || !current) { $('text').focus(); return; }
+  $('text').value = '';
+  await fetch('/control/messages', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ customerId: current, type: 'audio', text, language: $('lang').value }) });
 };
 $('image').onclick = () => current && fetch('/control/messages', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ customerId: current, type: 'image', caption: 'Photo from the customer' }) });
 const events = new EventSource('/control/events');

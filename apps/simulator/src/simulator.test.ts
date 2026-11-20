@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { GraphClient, messagesValues, verifySignature } from '@app/whatsapp';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { mockVoiceNote, readMockVoiceNote } from '@app/voice';
 import { seededRandom } from './faults.js';
 import { createSimulator, type Simulator } from './simulator.js';
 
@@ -46,6 +47,7 @@ let webhookUrl = '';
 let sim: Simulator;
 let close: () => Promise<void>;
 let graph: GraphClient;
+let serverUrl = '';
 
 beforeAll(async () => {
   await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
@@ -71,6 +73,7 @@ async function start(options: Partial<Parameters<typeof createSimulator>[0]> = {
     ...options,
   });
   const server = await sim.listen(0);
+  serverUrl = server.url;
   close = server.close;
   graph = new GraphClient({ baseUrl: server.url, version: 'v26.0', accessToken: TOKEN });
   return server.url;
@@ -196,6 +199,44 @@ describe('Graph API subset', () => {
     const download = await graph.downloadMedia(`${url}${new URL(info.url, url).pathname}`);
     expect(new TextDecoder().decode(download.bytes)).toBe('%PDF-1.7 price list');
     expect(info.mime_type).toBe('application/pdf');
+  });
+});
+
+describe('voice notes', () => {
+  it('a customer voice note arrives as Meta sends one, with the words inside the file', async () => {
+    await start();
+    sim.sendInbound([{ customerId: FATIMA, type: 'audio', text: 'متى يصل طلبي؟', language: 'ar' }]);
+    await sim.idle();
+    const [value] = messagesValues(JSON.parse(received[0]!.body));
+    const message = value!.messages![0]!;
+    expect(message.type).toBe('audio');
+    expect(message.audio).toMatchObject({ mime_type: 'audio/ogg; codecs=opus', voice: true });
+
+    const info = await graph.getMedia(message.audio!.id);
+    const file = await graph.downloadMedia(info.url.replace('http://placeholder', serverUrl));
+    expect(readMockVoiceNote(file.bytes)).toMatchObject({ text: 'متى يصل طلبي؟', language: 'ar' });
+    expect(sim.state.thread(FATIMA).at(-1)).toMatchObject({ type: 'audio', text: 'متى يصل طلبي؟' });
+  });
+
+  it('a business voice note is shown with what it says; an unknown media ID is refused', async () => {
+    await start();
+    sim.sendInbound([{ customerId: FATIMA, type: 'text', text: 'hello' }]);
+    const note = mockVoiceNote({ text: 'Your order shipped today.', language: 'en' });
+    const mediaId = await graph.uploadMedia(QAMAR, {
+      bytes: note,
+      mimeType: 'audio/ogg',
+      filename: 'reply.ogg',
+    });
+    await graph.sendMessage(QAMAR, { bsuid: FATIMA }, { kind: 'audio', mediaId, voice: true });
+    expect(sim.state.thread(FATIMA).at(-1)).toMatchObject({
+      direction: 'out',
+      type: 'audio',
+      mediaId,
+      text: 'Your order shipped today.',
+    });
+    await expect(
+      graph.sendMessage(QAMAR, { bsuid: FATIMA }, { kind: 'audio', mediaId: '999', voice: true }),
+    ).rejects.toMatchObject({ code: 131053 });
   });
 });
 
