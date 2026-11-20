@@ -757,9 +757,51 @@ New dependencies, in a new `@app/live` package that only the API and worker load
 - **WhatsApp:** the token is not checked against Meta when saved, and changing a business's number is not supported yet.
 - **Relevance floor** for Cohere is a placeholder until the evals.
 
+## Phase 8: evals and load test (2026-11-20)
+
+Approved on 2026-11-20: P-10 with Claude Sonnet as the judge for groundedness and language, spot-checked by hand. As in phase 7, nothing paid ran: the live eval waits for credentials.
+
+### D-097 A reply answers messages up to its turn's trigger (bug found by the load test)
+
+- **Found:** the first load test left 29 of 200 customers unanswered. A turn treated every customer message older than the latest outbound message as answered. But a reply is stored when its turn finishes, so a message that arrived while the previous turn was still running looked answered and never got its own turn. The safety sweep used the same rule, so it could not help. And it re-queued with the message's own job ID, which BullMQ keeps after the first job finishes, so the re-queue did nothing anyway.
+- **Fixed:** what a turn answers is now computed from turns. An assistant reply covers the customer's messages up to its trigger message; a person's reply, or an assistant reply with no turn (seeded history), covers everything before it; a turn that sent nothing still covers its trigger. The comparison runs in SQL, because timestamps carry microseconds that a JS `Date` drops, and the first version of the fix tripped on exactly that. The sweep function uses the same rule, and sweep jobs get their own job ID.
+- **Proved:** a new integration test makes the first turn slow and sends a second message mid-turn. It fails on the old code and passes on the new. The load test has passed on every run since (three in a row).
+- **Remaining:** if a turn runs longer than the 1.5 s debounce and the next message's own turn starts before it finishes, both turns reply: the customer gets two answers, the second covering both messages. That is better than no answer. Serialising turns per conversation would mean holding a lock across the model call; I'll revisit if the live run shows it.
+
+### D-098 The evals: production code, a separate database, scripted cases
+
+- **54 cases** (`evals/src/cases.ts`): 33 for Qamar Phone Corner and 21 for Kayal Bakes, in English, Hindi, Hinglish, Malayalam and Arabic. They cover knowledge answers, prices from the catalogues, own orders, someone else's order, a missing order, asking for a person, complaints, escalation words, custom quotes, off-topic requests and prompt injection. Every expectation follows the seeded knowledge.
+- **How a case runs:** it becomes a real conversation in a copy of the demo business (same knowledge, orders and settings) in its own database, `app_eval`, recreated each run so dev data and analytics are untouched. `runAssistantTurn`, the function the worker calls, answers it, and the stored turn is read back as the trace.
+- **Checks:**
+  - Handoff and decline come straight from the recorded turn. Handoff is scored only where the right answer is clear; "not in the knowledge base" may hand over or not.
+  - Groundedness requires the case's facts, forbids its leaks, and in live runs needs the judge's agreement.
+  - Language is judged in live runs and detected by script in mock runs.
+- **Judge:** a stronger Claude than the models graded (`EVAL_JUDGE_MODEL`, default `anthropic.claude-sonnet-5-5`; check the ID in Bedrock before the first run). It sees the customer messages, the evidence the assistant was shown, the reply and the expected language. Its verdict and reason are stored, and one case in five is listed for a hand spot-check; the agreement rate is written in once a person has checked.
+- **Commands:** `pnpm eval` runs live, on Haiku 5.5 and Haiku 4.5, with the judge. `pnpm eval:mock` runs offline and puts a warning at the top of `docs/EVALS.md`: mock numbers test the machinery, not quality. Both write `docs/EVALS.md` from the stored traces (reply time, tokens, cost per conversation) and keep the raw results in `evals/results/` (not committed).
+- **Seed fix found while writing cases:** the demo opening hours (phase 6) contradicted the businesses' own FAQs, so a correct model would have seen two answers. The hours now match the FAQs.
+
+### D-099 The load test proves nothing is lost or duplicated, from both sides
+
+- **What it does:** `pnpm load-test` drives a running stack (`make dev` or `make up`) through the simulator's control API. It sets up its own business and 200 customers (half with only a username), switches on faults (20 % duplicate webhooks, 300 ms reordering, 100 ms delay, 5 % failed sends, 5 % rate limits), and sends 1,000 messages in five waves.
+- **What it checks:**
+  1. Every message is stored once, by WhatsApp message ID.
+  2. Every reply is sent, and appears once on the customer's phone in the simulator's record, with nothing on a phone we did not send.
+  3. Replies arrive in order per conversation.
+  4. Every customer's last message got a turn.
+  5. All of it settles within 5 minutes.
+- **Result on this laptop, mock mode:** all checks passed, three runs in a row after D-097. `docs/LOAD-TEST.md` holds the last run's numbers, including reply time from the stored traces and the retries the faults caused. They are not EC2 numbers; phase 9 runs it there.
+- **Rejected:** k6 or autocannon. The checks need our database and the simulator's records, which a plain HTTP load tool does not see, and they would be another dependency.
+- **The simulator gained** `POST /control/businesses` and `POST /control/customers`, so a load test brings its own number and customers.
+
+### Known gaps after phase 8
+
+- **No live numbers yet.** `pnpm eval` needs AWS credentials, Haiku 5.5 access, the Cohere subscription and the judge model's ID checked; it costs money, so it runs only when you say. Until then `docs/EVALS.md` holds a mock run, marked as such.
+- **Judge and embedding costs** are not in the cost per conversation.
+- **Two replies** in the rare overlap described in D-097.
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). Still open: P-09 and P-10 (phase 8).
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.
