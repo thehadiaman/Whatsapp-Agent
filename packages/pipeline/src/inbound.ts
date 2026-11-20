@@ -12,7 +12,7 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Provider } from './config.js';
 import { recordDeadLetter } from './dead-letters.js';
 import type { PipelineDeps } from './deps.js';
-import { enqueueMedia, QUEUES } from './queues.js';
+import { enqueueAssistant, enqueueMedia, QUEUES, type AssistantJob } from './queues.js';
 import { isWebhookStatus } from './rules.js';
 import { applyStatusEvents } from './statuses.js';
 
@@ -74,6 +74,7 @@ export async function processWebhookEvent(
   }
 
   const mediaJobs: { tenantId: string; messageId: string }[] = [];
+  const assistantJobs: AssistantJob[] = [];
   const changed: { tenantId: string; conversationId: string }[] = [];
   for (const value of values) {
     const phoneNumberId = value.metadata.phone_number_id;
@@ -93,7 +94,15 @@ export async function processWebhookEvent(
     await withTenant(deps.db, route.tenantId, async (tx) => {
       for (const message of value.messages ?? []) {
         const stored = await storeInbound(tx, route, value, message);
-        if (!stored) {
+        // Duplicates are queued too: if a crash came between an earlier commit
+        // and its enqueue, Meta's retry is what gets the customer an answer.
+        // The job ID and the turn's unique trigger make a repeat a no-op.
+        assistantJobs.push({
+          tenantId: route.tenantId,
+          conversationId: stored.conversationId,
+          messageId: stored.id,
+        });
+        if (stored.duplicate) {
           result.duplicates += 1;
           continue;
         }
@@ -116,6 +125,11 @@ export async function processWebhookEvent(
 
   // After commit: the rows exist before any job can look for them.
   for (const job of mediaJobs) await enqueueMedia(deps.queues, job);
+  if (deps.assistant.settings.enabled) {
+    for (const job of assistantJobs) {
+      await enqueueAssistant(deps.queues, job, deps.assistant.settings.debounceMs);
+    }
+  }
   const unique = new Map(changed.map((c) => [c.conversationId, c]));
   for (const c of unique.values())
     await deps.events.conversationChanged(c.tenantId, c.conversationId);
@@ -246,7 +260,7 @@ async function storeInbound(
   route: Route,
   value: MessagesValue,
   message: InboundMessage,
-): Promise<{ id: string; conversationId: string; hasMedia: boolean } | null> {
+): Promise<{ id: string; conversationId: string; hasMedia: boolean; duplicate: boolean }> {
   const bsuid = message.from_user_id ?? null;
   const waId = message.from ?? null;
   const customerId = await upsertCustomer(tx, route.tenantId, {
@@ -284,7 +298,19 @@ async function storeInbound(
     })
     .onConflictDoNothing({ target: [schema.messages.channelId, schema.messages.waMessageId] })
     .returning({ id: schema.messages.id });
-  if (!inserted) return null;
+  if (!inserted) {
+    const [existing] = await tx
+      .select({ id: schema.messages.id, conversationId: schema.messages.conversationId })
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.channelId, route.channelId),
+          eq(schema.messages.waMessageId, message.id),
+        ),
+      );
+    if (!existing) throw new Error('inbound dedupe: conflict but no row found');
+    return { ...existing, hasMedia: false, duplicate: true };
+  }
 
   // Out-of-order delivery: an older message arriving late must not move the
   // window or "last message" time backwards.
@@ -297,7 +323,7 @@ async function storeInbound(
     })
     .where(eq(schema.conversations.id, conversationId));
 
-  return { id: inserted.id, conversationId, hasMedia: 'media' in content };
+  return { id: inserted.id, conversationId, hasMedia: 'media' in content, duplicate: false };
 }
 
 async function storeStatus(

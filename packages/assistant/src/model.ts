@@ -79,3 +79,26 @@ export async function completeValidated(
 ): Promise<ModelResponse> {
   return modelResponseSchema.parse(await model.complete(request));
 }
+
+/** A model that cannot be used at all (not configured); the turn hands over at once. */
+export class ModelUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ModelUnavailableError';
+  }
+}
+
+/**
+ * Live mode before the Bedrock adapter exists (phase 7): every turn hands the
+ * conversation to a person instead of answering with the mock.
+ */
+export class UnconfiguredModel implements ChatModel {
+  readonly name = 'unconfigured';
+  complete(): Promise<never> {
+    return Promise.reject(
+      new ModelUnavailableError(
+        'No live model is configured; the Bedrock adapter arrives in phase 7.',
+      ),
+    );
+  }
+}

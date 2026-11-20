@@ -13,6 +13,8 @@ export interface ModelPrice {
  */
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   mock: { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0 },
+  // Live mode before phase 7: no model is called, so nothing is spent.
+  unconfigured: { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0 },
   'anthropic.claude-haiku-5-5': { inputUsdPerMillionTokens: 0.1, outputUsdPerMillionTokens: 0.5 },
   'anthropic.claude-haiku-4-5': { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 5 },
 };

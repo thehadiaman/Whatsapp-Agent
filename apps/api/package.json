@@ -16,6 +16,7 @@
     "seed": "node dist/cli/seed.js"
   },
   "dependencies": {
+    "@app/assistant": "workspace:*",
     "@app/db": "workspace:*",
     "@app/pipeline": "workspace:*",
     "@app/shared": "workspace:*",

@@ -12,3 +12,8 @@ allowBuilds:
   esbuild: true
   # Optional native speed-up for msgpackr (via BullMQ); the pure-JS fallback is fine.
   msgpackr-extract: false
+
+# pdfjs-dist renders pages with this native canvas binary (35 MB); we only
+# extract text, which works without it.
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'

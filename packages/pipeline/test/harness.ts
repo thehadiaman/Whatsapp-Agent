@@ -11,6 +11,7 @@ import { createLogger } from '@app/shared';
 import { createSimulator, seededRandom, type FaultSettings, type Simulator } from '@app/simulator';
 import { SIGNATURE_HEADER, verifySignature } from '@app/whatsapp';
 import { Redis } from 'ioredis';
+import { MockChatModel, MockEmbedder, type ChatModel } from '@app/assistant';
 import { ProviderRegistry } from '../src/config.js';
 import { RedisEventPublisher } from '../src/events.js';
 import type { PipelineDeps } from '../src/deps.js';
@@ -97,6 +98,8 @@ export interface HarnessOptions {
   outboundBackoffMs?: number;
   statusStepMs?: number;
   seed?: number;
+  /** Off by default, so pipeline tests see only the replies they send. */
+  assistant?: { model?: ChatModel };
 }
 
 /**
@@ -200,6 +203,11 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       }),
     }),
     settings,
+    assistant: {
+      model: options.assistant?.model ?? new MockChatModel(),
+      embedder: new MockEmbedder(),
+      settings: { enabled: Boolean(options.assistant), debounceMs: 0, maxOutputTokens: 1024 },
+    },
     events: new RedisEventPublisher(
       publisher,
       createLogger({ service: 'events-test', level: 'error' }),

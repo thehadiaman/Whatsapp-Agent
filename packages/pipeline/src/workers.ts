@@ -1,12 +1,21 @@
 import { schema } from '@app/db';
 import { Worker, type ConnectionOptions, type Job } from 'bullmq';
 import { and, isNull, lt, sql } from 'drizzle-orm';
+import { processAssistantJob } from './assistant.js';
 import { recordDeadLetter } from './dead-letters.js';
 import type { PipelineDeps } from './deps.js';
 import { processWebhookEvent } from './inbound.js';
+import { failKnowledgeJob, ingestKnowledgeSource } from './knowledge.js';
 import { fetchInboundMedia } from './media.js';
 import { sendOutbound } from './outbound.js';
-import { enqueueOutbound, enqueueWebhookEvent, QUEUES, webhookJobSchema } from './queues.js';
+import {
+  enqueueAssistant,
+  enqueueKnowledge,
+  enqueueOutbound,
+  enqueueWebhookEvent,
+  QUEUES,
+  webhookJobSchema,
+} from './queues.js';
 
 export interface RunningWorkers {
   close(): Promise<void>;
@@ -25,7 +34,8 @@ export interface WorkerOptions {
 }
 
 /**
- * Starts the three pipeline workers and the sweeper. Used by apps/worker and
+ * Starts the pipeline workers (webhooks, outbound, media, assistant,
+ * knowledge) and the sweeper. Used by apps/worker and
  * by integration tests, so tests run exactly the production wiring.
  */
 export function startWorkers(deps: PipelineDeps, options: WorkerOptions): RunningWorkers {
@@ -53,14 +63,33 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
     concurrency: 2,
   });
 
-  for (const worker of [webhooks, outbound, media]) {
+  // Turns call a model: a few at a time keeps a burst from exhausting quotas.
+  const assistant = new Worker(QUEUES.assistant, (job: Job) => processAssistantJob(deps, job), {
+    connection,
+    prefix,
+    concurrency: 4,
+  });
+  // Reading a PDF is CPU-bound; one at a time keeps replies fast on a small server.
+  const knowledge = new Worker(QUEUES.knowledge, (job: Job) => ingestKnowledgeSource(deps, job), {
+    connection,
+    prefix,
+    concurrency: 1,
+  });
+  knowledge.on('failed', (job) => {
+    if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
+    void failKnowledgeJob(deps, job).catch((err: unknown) => {
+      log.error({ err }, 'could not mark knowledge source failed');
+    });
+  });
+
+  for (const worker of [webhooks, outbound, media, assistant, knowledge]) {
     // Without an error listener a worker can stop processing (BullMQ docs).
     worker.on('error', (error) => {
       log.error({ err: error, queue: worker.name }, 'worker error');
     });
   }
-  // Outbound records its own dead letters; these two do it when retries run out.
-  for (const worker of [webhooks, media]) {
+  // Outbound and the assistant record their own outcome; these do it when retries run out.
+  for (const worker of [webhooks, media, knowledge]) {
     worker.on('failed', (job, error) => {
       if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
       void recordDeadLetter(deps.db, {
@@ -97,6 +126,39 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
     for (const row of pending.rows) {
       await enqueueOutbound(deps.queues, { tenantId: row.tenant_id, messageId: row.message_id });
     }
+
+    // Knowledge sources whose ingest job was lost.
+    const sources = await deps.db.execute<{
+      tenant_id: string;
+      source_id: string;
+      version: number;
+    }>(
+      sql`select tenant_id, source_id, version from pending_knowledge_sources(make_interval(secs => ${sweepAfter * 10}), 50)`,
+    );
+    for (const row of sources.rows) {
+      await enqueueKnowledge(deps.queues, {
+        tenantId: row.tenant_id,
+        sourceId: row.source_id,
+        version: row.version,
+      });
+    }
+
+    // Customer messages the assistant never answered (job lost after commit).
+    // Only the last hour: an older silence is for a person to pick up.
+    const unanswered = await deps.db.execute<{
+      tenant_id: string;
+      conversation_id: string;
+      message_id: string;
+    }>(
+      sql`select tenant_id, conversation_id, message_id from unanswered_by_assistant(make_interval(secs => ${sweepAfter}), make_interval(hours => 1), 100)`,
+    );
+    for (const row of deps.assistant.settings.enabled ? unanswered.rows : []) {
+      await enqueueAssistant(
+        deps.queues,
+        { tenantId: row.tenant_id, conversationId: row.conversation_id, messageId: row.message_id },
+        0,
+      );
+    }
   };
   const timer = setInterval(() => {
     sweep().catch((error: unknown) => {
@@ -109,7 +171,13 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
     sweep,
     close: async () => {
       clearInterval(timer);
-      await Promise.all([webhooks.close(), outbound.close(), media.close()]);
+      await Promise.all([
+        webhooks.close(),
+        outbound.close(),
+        media.close(),
+        assistant.close(),
+        knowledge.close(),
+      ]);
     },
   };
 }

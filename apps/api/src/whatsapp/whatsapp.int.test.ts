@@ -3,6 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
+import { MockChatModel, MockEmbedder } from '@app/assistant';
 import { createDb, schema, type DbHandle } from '@app/db';
 import { testDatabaseUrls } from '@app/db/testing';
 import {
@@ -141,6 +142,12 @@ beforeAll(async () => {
       }),
       settings,
       events: noEvents,
+      // Webhook handling only: the assistant's own tests live in @app/pipeline.
+      assistant: {
+        model: new MockChatModel(),
+        embedder: new MockEmbedder(),
+        settings: { enabled: false, debounceMs: 0, maxOutputTokens: 1024 },
+      },
     },
     { connection, prefix },
   );

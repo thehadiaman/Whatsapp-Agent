@@ -11,6 +11,12 @@ export type EmbeddingPurpose = 'document' | 'query';
 export interface Embedder {
   /** Stored with each passage, so a model change can find what must be re-embedded. */
   readonly model: string;
+  /**
+   * Cosine similarity below which a passage counts as unrelated. Each model
+   * spreads similarities differently, so the floor belongs to the model; the
+   * live one is set from the retrieval evals (phase 8).
+   */
+  readonly relevanceFloor: number;
   embed(texts: readonly string[], purpose: EmbeddingPurpose): Promise<number[][]>;
 }
 
@@ -51,6 +57,8 @@ function features(text: string): Map<string, number> {
  */
 export class MockEmbedder implements Embedder {
   readonly model = 'mock-hashed-ngrams-v1';
+  // Texts sharing one content word score about 0.2 here; unrelated texts near 0.
+  readonly relevanceFloor = 0.15;
 
   /** Documents and queries are embedded the same way here; live models may differ. */
   embed(texts: readonly string[]): Promise<number[][]> {
@@ -72,5 +80,16 @@ export class MockEmbedder implements Embedder {
       return vector;
     }
     return vector.map((v) => v / norm);
+  }
+}
+
+/** Live mode before the Bedrock adapter exists (phase 7): indexing fails with a clear reason. */
+export class UnconfiguredEmbedder implements Embedder {
+  readonly model = 'unconfigured';
+  readonly relevanceFloor = 1;
+  embed(): Promise<never> {
+    return Promise.reject(
+      new Error('No live embedding model is configured; the Bedrock adapter arrives in phase 7.'),
+    );
   }
 }

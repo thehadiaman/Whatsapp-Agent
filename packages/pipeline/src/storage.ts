@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 /**
@@ -8,9 +8,17 @@ import { dirname, join, resolve } from 'node:path';
 export interface ObjectStorage {
   put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
   get(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  /** Removes the object if it exists. */
+  delete(key: string): Promise<void>;
 }
 
 const KEY = /^tenants\/[0-9a-f-]{36}\/[a-z]+\/[0-9a-f-]{36}$/;
+
+export function knowledgeObjectKey(tenantId: string, sourceId: string): string {
+  const key = `tenants/${tenantId}/knowledge/${sourceId}`;
+  assertKey(key);
+  return key;
+}
 
 export function mediaKey(tenantId: string, messageId: string): string {
   const key = `tenants/${tenantId}/media/${messageId}`;
@@ -53,5 +61,11 @@ export class LocalDiskStorage implements ObjectStorage {
     } catch {
       return null;
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    const path = this.path(key);
+    await rm(path, { force: true });
+    await rm(`${path}.type`, { force: true });
   }
 }

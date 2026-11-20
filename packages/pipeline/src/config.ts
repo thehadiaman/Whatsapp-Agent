@@ -1,3 +1,11 @@
+import {
+  MockChatModel,
+  MockEmbedder,
+  UnconfiguredEmbedder,
+  UnconfiguredModel,
+  type ChatModel,
+  type Embedder,
+} from '@app/assistant';
 import { appModeSchema, type AppMode } from '@app/shared';
 import { GraphClient } from '@app/whatsapp';
 import { z } from 'zod';
@@ -33,6 +41,14 @@ export const pipelineEnvSchema = z.object({
   OUTBOUND_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(6),
   OUTBOUND_BACKOFF_MS: z.coerce.number().int().min(1).default(1_000),
   MEDIA_STORAGE_DIR: z.string().default('.data/media'),
+  /** Kill switch: false stops new assistant turns; conversations wait for a person. */
+  ASSISTANT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  /** Wait after a customer message before answering, so a burst of messages gets one reply. */
+  ASSISTANT_DEBOUNCE_MS: z.coerce.number().int().min(0).default(1_500),
+  ASSISTANT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_192).default(1_024),
   /** BullMQ key prefix; the API and worker must agree. Tests use their own. */
   QUEUE_PREFIX: z
     .string()
@@ -122,4 +138,34 @@ export function pipelineSettings(env: PipelineEnv): PipelineSettings {
     outboundAttempts: env.OUTBOUND_ATTEMPTS,
     outboundBackoffMs: env.OUTBOUND_BACKOFF_MS,
   };
+}
+
+export interface AssistantSettings {
+  /** When false, customer messages queue no assistant turn. */
+  enabled: boolean;
+  debounceMs: number;
+  maxOutputTokens: number;
+}
+
+/** The model and embedder behind the assistant, chosen by APP_MODE. */
+export interface AssistantDeps {
+  model: ChatModel;
+  embedder: Embedder;
+  settings: AssistantSettings;
+}
+
+/**
+ * Mock mode: the scripted model and the hashed n-gram embedder, offline.
+ * Live mode: the Bedrock adapters arrive in phase 7; until then every turn
+ * hands over to a person, so a real customer is never answered by the mock.
+ */
+export function assistantDeps(env: PipelineEnv): AssistantDeps {
+  const settings = {
+    enabled: env.ASSISTANT_ENABLED,
+    debounceMs: env.ASSISTANT_DEBOUNCE_MS,
+    maxOutputTokens: env.ASSISTANT_MAX_OUTPUT_TOKENS,
+  };
+  return env.APP_MODE === 'mock'
+    ? { model: new MockChatModel(), embedder: new MockEmbedder(), settings }
+    : { model: new UnconfiguredModel(), embedder: new UnconfiguredEmbedder(), settings };
 }

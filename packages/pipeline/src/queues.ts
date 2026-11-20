@@ -6,17 +6,28 @@ export const QUEUES = {
   webhooks: 'whatsapp-webhooks',
   outbound: 'whatsapp-outbound',
   media: 'whatsapp-media',
+  assistant: 'assistant-turns',
+  knowledge: 'knowledge-ingest',
 } as const;
 
 // Job data is validated when a job is taken, like any other boundary (brief §7).
 export const webhookJobSchema = z.object({ eventId: z.uuid() });
 export const tenantMessageJobSchema = z.object({ tenantId: z.uuid(), messageId: z.uuid() });
 export type TenantMessageJob = z.infer<typeof tenantMessageJobSchema>;
+/** One job per customer message; the newest unanswered message in a burst gets the reply. */
+export const assistantJobSchema = z.object({
+  tenantId: z.uuid(),
+  conversationId: z.uuid(),
+  messageId: z.uuid(),
+});
+export type AssistantJob = z.infer<typeof assistantJobSchema>;
 
 export interface Queues {
   webhooks: Queue;
   outbound: Queue;
   media: Queue;
+  assistant: Queue;
+  knowledge: Queue;
   close(): Promise<void>;
 }
 
@@ -46,12 +57,31 @@ export function createQueues(
     prefix,
     defaultJobOptions: { ...keep, attempts: 5, backoff: { type: 'exponential', delay: 2_000 } },
   });
+  // Retried for model and network errors; the last attempt hands over to a person.
+  const assistant = new Queue(QUEUES.assistant, {
+    connection,
+    prefix,
+    defaultJobOptions: { ...keep, attempts: 3, backoff: { type: 'exponential', delay: 2_000 } },
+  });
+  const knowledge = new Queue(QUEUES.knowledge, {
+    connection,
+    prefix,
+    defaultJobOptions: { ...keep, attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
+  });
   return {
     webhooks,
     outbound,
     media,
+    assistant,
+    knowledge,
     close: async () => {
-      await Promise.all([webhooks.close(), outbound.close(), media.close()]);
+      await Promise.all([
+        webhooks.close(),
+        outbound.close(),
+        media.close(),
+        assistant.close(),
+        knowledge.close(),
+      ]);
     },
   };
 }
@@ -68,4 +98,22 @@ export async function enqueueOutbound(queues: Queues, job: TenantMessageJob): Pr
 
 export async function enqueueMedia(queues: Queues, job: TenantMessageJob): Promise<void> {
   await queues.media.add('fetch', job, { jobId: job.messageId });
+}
+
+/** Keyed by message ID: a duplicate webhook or a sweep cannot answer a message twice. */
+export async function enqueueAssistant(
+  queues: Queues,
+  job: AssistantJob,
+  delayMs: number,
+): Promise<void> {
+  await queues.assistant.add('turn', job, { jobId: job.messageId, delay: delayMs });
+}
+
+/** Keyed by source and version: an edit while reading queues the new version separately. */
+export async function enqueueKnowledge(
+  queues: Queues,
+  job: { tenantId: string; sourceId: string; version: number },
+): Promise<void> {
+  // BullMQ job IDs may not contain ":".
+  await queues.knowledge.add('ingest', job, { jobId: `${job.sourceId}-v${String(job.version)}` });
 }
