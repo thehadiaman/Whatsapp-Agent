@@ -194,6 +194,28 @@ describe('answering', () => {
     });
   });
 
+  it('answers a message that arrives while the previous turn is still running', async () => {
+    // The first reply is stored after the second message arrives; it answers
+    // only the first, so the second still gets its own turn (load test, D-097).
+    let calls = 0;
+    const slow = new ScriptedModel('mock', async () => {
+      calls += 1;
+      if (calls === 1) await new Promise((resolve) => setTimeout(resolve, 800));
+      // No figures: the figure guard would hold back a reply like "Reply 1".
+      return answer(
+        calls === 1 ? 'Here is the first answer.' : 'Here is the second answer.',
+        'none',
+      );
+    });
+    await start({ model: slow, debounceMs: 1_000 });
+    write(0, 'first question');
+    await waitFor('first turn running', () => Promise.resolve(calls === 1));
+    write(0, 'second question');
+    await waitFor('two turns', async () => (await turns()).length === 2, 15_000);
+    expect(repliesOn(0).length).toBeGreaterThanOrEqual(1);
+    await waitFor('both replies sent', () => Promise.resolve(repliesOn(0).length === 2));
+  });
+
   it('answers a burst of messages once, after the last one', async () => {
     await start();
     write(0, 'hello', 'are you open', 'do you have the pixel 9?');

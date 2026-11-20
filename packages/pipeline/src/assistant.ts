@@ -109,18 +109,24 @@ async function loadContext(tx: Transaction, job: AssistantJob): Promise<Context 
     .where(eq(schema.assistantTurns.triggerMessageId, job.messageId));
   if (answered) return null;
 
-  const [lastOutbound] = await tx
-    .select({ at: m.createdAt })
-    .from(m)
-    .where(
-      and(
-        eq(m.conversationId, job.conversationId),
-        eq(m.direction, 'outbound'),
-        notInArray(m.status, ['failed', 'cancelled']),
-      ),
-    )
-    .orderBy(desc(m.createdAt))
-    .limit(1);
+  // How far the business has answered. An assistant reply answers the
+  // customer's messages up to its turn's trigger, not up to when it was stored:
+  // a message that arrives while a turn is running is still unanswered (D-097).
+  // A person's reply, or an assistant reply with no turn (seeded history),
+  // answers everything before it.
+  // Compared in SQL: timestamps carry microseconds that a JS Date would drop.
+  const conversationId = job.conversationId;
+  const covered = sql`greatest(
+    (select max(coalesce(trig.created_at, o.created_at)) from messages o
+       left join assistant_turns t on t.reply_message_id = o.id
+       left join messages trig on trig.id = t.trigger_message_id
+      where o.conversation_id = ${conversationId} and o.direction = 'outbound'
+        and o.status not in ('failed', 'cancelled')),
+    -- Turns that sent nothing (a handover, a rate limit) still covered their trigger.
+    (select max(trig.created_at) from assistant_turns t
+       join messages trig on trig.id = t.trigger_message_id
+      where t.conversation_id = ${conversationId})
+  )`;
 
   const pendingRows = await tx
     .select()
@@ -129,7 +135,7 @@ async function loadContext(tx: Transaction, job: AssistantJob): Promise<Context 
       and(
         eq(m.conversationId, job.conversationId),
         eq(m.direction, 'inbound'),
-        lastOutbound ? gt(m.createdAt, lastOutbound.at) : undefined,
+        sql`${m.createdAt} > coalesce(${covered}, '-infinity'::timestamptz)`,
       ),
     )
     .orderBy(desc(m.createdAt))

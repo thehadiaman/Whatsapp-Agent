@@ -221,6 +221,8 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
         deps.queues,
         { tenantId: row.tenant_id, conversationId: row.conversation_id, messageId: row.message_id },
         0,
+        // Its own job ID: the message's first job may have finished, standing aside.
+        'sweep',
       );
     }
   };
