@@ -698,9 +698,68 @@ Approved on 2026-11-20 before building: the settings design (now in DESIGN.md), 
 - **Hours:** no overnight spans, no holidays.
 - **The figure check and hours:** times in the hours fact count as evidence, so a model could quote an opening time correctly from the hours while the knowledge base says otherwise. The hours are the owner's latest word, so this is the intended source.
 
+## Phase 7: live adapters (2026-11-20)
+
+Approved on 2026-11-20 before building: Cohere Embed Multilingual v3 (a paid AWS Marketplace model), the AWS SDK v3 clients and `@anthropic-ai/bedrock-sdk`, offline verification now with the live run later, and AES-256-GCM for WhatsApp tokens (P-04). No cloud resource was created and no paid API was called: every live adapter is checked against the docs and with fake SDK clients, and the live contract suite waits for credentials (D-096).
+
+New dependencies, in a new `@app/live` package that only the API and worker load: `@anthropic-ai/bedrock-sdk` 1.1.2 and `@aws-sdk/client-{bedrock-runtime,s3,transcribe,polly}` and `@aws-sdk/s3-request-presigner` 3.1171.0, all past the two-day release-age rule. They grow the worker image from 448 MB to 520 MB (measured with `docker images`); the built image wires the live adapters as expected in live mode.
+
+### D-090 Embeddings: Cohere Embed Multilingual v3
+
+- **Checked on 2026-11-20** (Bedrock model cards): `cohere.embed-multilingual-v3` runs in-region in Mumbai, is billed through AWS Marketplace, returns 1,024 floats (our column), takes 96 texts a call and 512 tokens a text (our passages are at most 1,200 characters).
+- **Chosen** because cross-language retrieval is the main quality risk (D-060): customers ask in Hindi, Malayalam and Arabic about knowledge written in English. Documents are embedded as `search_document` and questions as `search_query`, which Cohere embeds differently on purpose.
+- **Rejected:** Titan Text Embeddings V2 (AWS warns that cross-language queries are sub-optimal), and Cohere Embed v4, which Mumbai reaches only through the global profile, so requests may leave the region.
+- **Relevance floor:** 0.25, a starting value; the retrieval evals (phase 8) set it from measurements.
+
+### D-091 Transcribe: batch jobs on our S3 copy of the voice note
+
+- **Flow:** start a job named `voice-{messageId}` on `s3://{bucket}/tenants/{t}/media/{id}`. With one business language it names that language; with several it identifies among only those (`IdentifyLanguage` and `LanguageOptions`). The transcript goes to `tenants/{t}/transcripts/{id}.json` in our bucket and is read, then deleted along with the job: the text lives on the message, not in two places.
+- **Retries:** the adapter polls every 2 s for up to 90 s, then lets the transcription job retry. A retry finds the job already started (`ConflictException`) and waits for it, so a note is never transcribed twice. A failed job, an unsupported format (AAC is not in Transcribe's list) or no speech hands the note to a person (D-074).
+- **Open, and the main risk of this phase:** the batch documentation lists "Ogg" without naming the codec, and lists Ogg Opus only for streaming. WhatsApp voice notes are Ogg Opus. The live contract test (D-096) answers this on its first run, because it transcribes a real Polly Ogg Opus note. If batch rejects it, the options are the streaming API (which does list Ogg Opus) or converting to FLAC, and I will bring them to you. Until then a rejected note still reaches a person.
+- **Rejected for now:** streaming transcription. The brief describes S3 then Transcribe, and streaming is a long-lived HTTP/2 connection per note for a gain in latency nobody has measured yet.
+
+### D-092 S3 storage, and playback through short-lived links
+
+- **Chosen:** in live mode with `MEDIA_BUCKET` set, media and knowledge files go to S3 with SSE-S3 encryption on every write (the bucket also encrypts by default, phase 9). Without a bucket, live mode uses local disk and voice notes go to a person, because Transcribe can only read S3.
+- **Playback:** `/api/media/:id` still checks the tenant, then redirects to a presigned GET that lives `MEDIA_URL_TTL_SECONDS` (300 s). The link fixes `Content-Type` and `Content-Disposition` in its signature, so a customer's HTML or SVG still downloads instead of rendering. The web build's content policy admits the bucket's origin through `MEDIA_ORIGIN`, a build argument (phase 9 passes it).
+- **The seed** uses the same storage and embedder factories as the apps, so a live seed stores files in S3 and embeds with Cohere.
+
+### D-093 Only vectors from the same model are compared
+
+- **Fixed:** retrieval's semantic half compared a query with every passage, whatever model embedded it. Vectors from two models are not comparable, so it now filters on the passage's recorded model. The keyword half is unchanged.
+- **Re-embedding:** at start-up the worker finds knowledge sources whose passages another model made (`requeue_stale_embeddings`), gives each a new version and queues it. Old passages keep serving keyword search until the new ones replace them in one transaction. This makes a model change (mock to Cohere, or a newer Cohere) a restart, not a migration.
+- **Not covered:** files stored on local disk before a switch to S3 are not copied over.
+
+### D-094 Each business's WhatsApp token, sealed (P-04 built)
+
+- **Chosen:** the owner enters the phone number ID, the WhatsApp Business Account ID, the number as customers see it, and a system-user token. The token is sealed with AES-256-GCM under `CREDENTIALS_KEY` (32 bytes, from SSM in production) and bound to its phone number ID as additional data, so a sealed token copied onto another number does not open. It is never returned to a browser, and the audit entry records only that it changed. Saving without a token keeps the saved one.
+- **Platform-wide, unchanged:** the Meta app secret and the webhook verify token (one Meta app for the platform). `META_ACCESS_TOKEN` is gone: each send opens the token of the number it goes through.
+- **Rules:** live mode only (in mock mode the form says why); one Meta number per business in v1; a number already connected to another business is refused. Row-level security hides that row, so the unique constraint is what catches it.
+- **Rejected:** AWS KMS envelope encryption: stronger key custody, but a new cloud resource and a per-call cost (you chose the SSM key).
+
+### D-095 Claude in Amazon Bedrock: the adapter's choices
+
+- **Checked on 2026-11-20** (Anthropic's "Claude in Amazon Bedrock" page and the installed SDK's types): `AnthropicBedrockMantle({ awsRegion })` calls `bedrock-mantle.{region}.api.aws` with the Messages API, and credentials fall back to the default AWS chain, so the instance role is enough. Mumbai is served by the global endpoint, with no premium. `anthropic.claude-haiku-4-5` is open to every Bedrock account; `anthropic.claude-haiku-5-5` needs access granted first.
+- **Errors:** 400, 401, 403, 404 and 422 hand the conversation over at once (no access, wrong model, rejected request). Throttling, timeouts and server errors are retried, by the SDK twice and then by the assistant job.
+- **Output:** the prompt asks for a final JSON object. The adapter takes the last complete object in the text; anything else fails validation, and the conversation goes to a person.
+- **Prices:** the table keeps Anthropic's list prices for both Haiku models. AWS's price page did not show them on 2026-11-20, so they are unconfirmed against an AWS bill. Embedding, Transcribe and Polly costs are not recorded per turn yet.
+
+### D-096 One contract suite, mock always, live on request
+
+- `packages/pipeline/src/contract.test.ts` states what every adapter must do: the model answers a grounded question in the agreed shape; embeddings have 1,024 dimensions and put a question nearer its answer; storage keeps, returns and forgets an object; speech comes out as playable Ogg Opus under 512 KB and goes back to the right words in the right language.
+- The mock adapters run it in every `make check`. The live ones run only with `LIVE_CONTRACT=1` and AWS credentials (`pnpm --filter @app/pipeline run contract:live`), never in CI, so automated tests still never call a paid API. Its voice check chains Polly into S3 into Transcribe, the same path a customer's note takes.
+- **Also offline:** each adapter's requests are checked against the documented shapes with fake SDK clients (`packages/live/test`). S3 presigning runs for real, since signing needs no network.
+
+### Known gaps after phase 7
+
+- **Nothing has run against AWS yet.** Before live mode works end to end, a first live contract run needs: access to Haiku 5.5 in Bedrock (or `BEDROCK_CHAT_MODEL=anthropic.claude-haiku-4-5`), the Cohere Marketplace subscription, a bucket, and credentials. The open questions are Ogg Opus in batch Transcribe (D-091) and whether the current SDK works with Haiku 4.5 (D-059).
+- **P-09** (detect a customer's language once, then reuse it) is still a proposal: Transcribe identifies among all of the business's languages on every note.
+- **WhatsApp:** the token is not checked against Meta when saved, and changing a business's number is not supported yet.
+- **Relevance floor** for Cohere is a placeholder until the evals.
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. Still open: P-04 (phase 7), P-09 (phase 7) and P-10 (phase 8).
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). Still open: P-09 and P-10 (phase 8).
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.
