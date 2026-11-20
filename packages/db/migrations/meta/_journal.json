@@ -43,6 +43,13 @@
       "when": 1795138200614,
       "tag": "0005_assistant",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795138552033,
+      "tag": "0006_assistant_sweeps",
+      "breakpoints": true
     }
   ]
 }
