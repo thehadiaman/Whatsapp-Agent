@@ -13,6 +13,9 @@ export interface SeedTenant {
   slug: string;
   name: string;
   timezone: string;
+  /** Set when the tenant is created only: afterwards they are the owner's settings. */
+  languages?: string[];
+  voiceReplies?: boolean;
   members: (SeedUser & { role: TenantRole })[];
   /** A WhatsApp number on the simulator (provider `simulator`). */
   channel?: { phoneNumberId: string; displayPhoneNumber: string };
@@ -56,7 +59,13 @@ export async function upsertUser(
 export async function upsertTenant(db: Database, tenant: SeedTenant): Promise<string> {
   const [row] = await db
     .insert(schema.tenants)
-    .values({ slug: tenant.slug, name: tenant.name, timezone: tenant.timezone })
+    .values({
+      slug: tenant.slug,
+      name: tenant.name,
+      timezone: tenant.timezone,
+      ...(tenant.languages ? { languages: tenant.languages } : {}),
+      ...(tenant.voiceReplies === undefined ? {} : { voiceReplies: tenant.voiceReplies }),
+    })
     .onConflictDoUpdate({
       target: schema.tenants.slug,
       set: { name: tenant.name, timezone: tenant.timezone, updatedAt: new Date() },
@@ -96,6 +105,8 @@ export function demoTenants(password: string): SeedTenant[] {
     slug: business.slug,
     name: business.name,
     timezone: business.timezone,
+    languages: [...business.languages],
+    voiceReplies: business.voiceReplies,
     channel: business.channel,
     members: business.staff.map((person) => ({ ...person, password })),
   }));

@@ -1,10 +1,11 @@
-import { schema, type StoredMedia, type Transaction } from '@app/db';
+import { schema, type StoredMedia, type StoredTranscript, type Transaction } from '@app/db';
 import { windowState } from '@app/pipeline';
 import type {
   ConversationDetail,
   ConversationListItem,
   ConversationState,
   TimelineEntry,
+  TimelineMessage,
 } from '@app/shared';
 import { asc, eq, sql } from 'drizzle-orm';
 
@@ -20,8 +21,21 @@ function windowClosesAt(lastInboundAt: Date | string | null): string | null {
   return iso(windowState(lastInboundAt ? new Date(lastInboundAt) : null, new Date()).closesAt);
 }
 
+function transcriptView(t: StoredTranscript | null): TimelineMessage['transcript'] {
+  if (!t) return null;
+  if (t.status === 'done') {
+    return { status: 'done', text: t.text, language: t.language, engine: t.engine };
+  }
+  return t;
+}
+
 /** One line of text for the queue, whatever the message kind. */
-export function previewOf(kind: string, body: string | null, media: StoredMedia | null): string {
+export function previewOf(
+  kind: string,
+  body: string | null,
+  media: StoredMedia | null,
+  transcript: StoredTranscript | null = null,
+): string {
   switch (kind) {
     case 'text':
       return (body ?? '').slice(0, 140);
@@ -29,8 +43,12 @@ export function previewOf(kind: string, body: string | null, media: StoredMedia 
       return media?.caption ? `Photo: ${media.caption}` : 'Photo';
     case 'document':
       return `Document${media?.filename ? `: ${media.filename}` : ''}`;
-    case 'audio':
-      return media?.voice ? 'Voice note' : 'Audio file';
+    case 'audio': {
+      const label = media?.voice || !media ? 'Voice note' : 'Audio file';
+      // What was said: the transcript of a customer's note, the text of a spoken reply.
+      const words = transcript?.status === 'done' ? transcript.text : body;
+      return words ? `${label}: ${words}`.slice(0, 140) : label;
+    }
     case 'template':
       return 'Template message';
     default:
@@ -51,6 +69,7 @@ interface ListRow extends Record<string, unknown> {
   lm_kind: string | null;
   lm_body: string | null;
   lm_media: StoredMedia | null;
+  lm_transcript: StoredTranscript | null;
   lm_at: Date | string | null;
   waiting_since: Date | string | null;
 }
@@ -63,13 +82,14 @@ export async function listConversations(
     select c.id, c.number, c.state, c.holder_user_id, hu.name as holder_name,
            cu.profile_name, cu.wa_id, c.last_inbound_at,
            lm.direction as lm_direction, lm.kind as lm_kind, lm.body as lm_body,
-           lm.media as lm_media, lm.at as lm_at,
+           lm.media as lm_media, lm.transcript as lm_transcript, lm.at as lm_at,
            wt.created_at as waiting_since
     from conversations c
     join customers cu on cu.id = c.customer_id
     left join users hu on hu.id = c.holder_user_id
     left join lateral (
-      select m.direction, m.kind, m.body, m.media, coalesce(m.wa_timestamp, m.created_at) as at
+      select m.direction, m.kind, m.body, m.media, m.transcript,
+             coalesce(m.wa_timestamp, m.created_at) as at
       from messages m where m.conversation_id = c.id
       order by coalesce(m.wa_timestamp, m.created_at) desc limit 1
     ) lm on true
@@ -95,7 +115,7 @@ export async function listConversations(
       row.lm_direction && row.lm_kind && row.lm_at
         ? {
             direction: row.lm_direction,
-            preview: previewOf(row.lm_kind, row.lm_body, row.lm_media),
+            preview: previewOf(row.lm_kind, row.lm_body, row.lm_media, row.lm_transcript),
             at: new Date(row.lm_at).toISOString(),
           }
         : null,
@@ -114,10 +134,12 @@ export async function conversationDetail(
       customer: schema.customers,
       channel: schema.channels,
       holderName: schema.users.name,
+      voiceReplies: schema.tenants.voiceReplies,
     })
     .from(schema.conversations)
     .innerJoin(schema.customers, eq(schema.customers.id, schema.conversations.customerId))
     .innerJoin(schema.channels, eq(schema.channels.id, schema.conversations.channelId))
+    .innerJoin(schema.tenants, eq(schema.tenants.id, schema.conversations.tenantId))
     .leftJoin(schema.users, eq(schema.users.id, schema.conversations.holderUserId))
     .where(eq(schema.conversations.id, conversationId));
   if (!row) return null;
@@ -167,6 +189,16 @@ export async function conversationDetail(
             available: Boolean(m.media.storageKey),
           }
         : null,
+      transcript: transcriptView(m.transcript),
+      speech: m.speech
+        ? {
+            language: m.speech.language,
+            voiceId: m.speech.voiceId,
+            fallback: m.speech.fallback,
+            engine: m.speech.engine ?? null,
+            durationMs: m.speech.durationMs ?? null,
+          }
+        : null,
       status: m.status,
       error: m.error,
       turnId,
@@ -208,6 +240,7 @@ export async function conversationDetail(
       reopenTemplateName: row.channel.reopenTemplateName,
     },
     windowClosesAt: windowClosesAt(c.lastInboundAt),
+    voiceReplies: row.voiceReplies,
     timeline,
   };
 }

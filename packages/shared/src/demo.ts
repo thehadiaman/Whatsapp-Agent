@@ -18,6 +18,9 @@ export const DEMO_BUSINESSES = [
     slug: 'qamar-phone-corner',
     name: 'Qamar Phone Corner',
     timezone: 'Asia/Dubai',
+    // Spoken languages (voice notes are transcribed as one of these) and voice replies.
+    languages: ['en', 'ar', 'hi'],
+    voiceReplies: true,
     // Simulator number; Meta phone number IDs are numeric strings like this.
     channel: { phoneNumberId: '100000000000001', displayPhoneNumber: '+971 4 555 0101' },
     staff: [
@@ -29,6 +32,8 @@ export const DEMO_BUSINESSES = [
     slug: 'kayal-bakes',
     name: 'Kayal Bakes',
     timezone: 'Asia/Kolkata',
+    languages: ['en', 'ml', 'hi'],
+    voiceReplies: true,
     channel: { phoneNumberId: '100000000000002', displayPhoneNumber: '+91 484 555 0102' },
     staff: [
       { name: 'Mariam Thomas', email: 'mariam@kayal.example', role: 'owner' },
@@ -39,6 +44,8 @@ export const DEMO_BUSINESSES = [
   slug: string;
   name: string;
   timezone: string;
+  languages: readonly ('en' | 'hi' | 'ml' | 'ar')[];
+  voiceReplies: boolean;
   channel: { phoneNumberId: string; displayPhoneNumber: string };
   staff: readonly { name: string; email: string; role: TenantRole }[];
 }[];

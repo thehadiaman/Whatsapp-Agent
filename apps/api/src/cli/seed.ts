@@ -40,8 +40,9 @@ try {
   for (const tenant of demoTenants(password)) {
     await upsertTenant(db, tenant);
   }
-  await seedConversations(db, { bulk: env.SEED_BULK_CONVERSATIONS });
-  await seedKnowledge(db, new LocalDiskStorage(env.MEDIA_STORAGE_DIR));
+  const storage = new LocalDiskStorage(env.MEDIA_STORAGE_DIR);
+  await seedConversations(db, storage, { bulk: env.SEED_BULK_CONVERSATIONS });
+  await seedKnowledge(db, storage);
   console.log('seed: demo tenants, users, conversations, knowledge and orders ready');
 } finally {
   await close();

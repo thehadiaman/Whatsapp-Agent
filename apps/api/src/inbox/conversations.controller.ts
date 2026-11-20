@@ -1,3 +1,4 @@
+import { detectLanguage } from '@app/assistant';
 import { schema } from '@app/db';
 import {
   enqueueOutbound,
@@ -10,6 +11,7 @@ import {
   type EventPublisher,
   type ObjectStorage,
   type Queues,
+  type ReplyContent,
 } from '@app/pipeline';
 import {
   assignBodySchema,
@@ -22,7 +24,9 @@ import {
   type ReplyBody,
   type TurnExplanation,
 } from '@app/shared';
+import { spokenLanguageOf } from '@app/voice';
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -307,9 +311,21 @@ export class ConversationsController {
   ): Promise<{ messageId: string }> {
     const messageId = await this.tenantDb
       .run(member, async (tx) => {
-        let content:
-          { kind: 'text'; body: string } | { kind: 'template'; name: string; languageCode: string };
-        if ('text' in body) {
+        let content: ReplyContent;
+        if ('text' in body && body.voice) {
+          const [tenant] = await tx
+            .select({ voiceReplies: schema.tenants.voiceReplies })
+            .from(schema.tenants)
+            .where(eq(schema.tenants.id, member.tenantId));
+          if (!tenant?.voiceReplies) {
+            throw new BadRequestException(
+              'Voice replies are off for this business. An owner can turn them on in settings.',
+            );
+          }
+          // Spoken in the language it is written in; no voice for it means text.
+          const language = spokenLanguageOf(detectLanguage(body.text)) ?? 'en';
+          content = { kind: 'voice', body: body.text, language };
+        } else if ('text' in body) {
           content = { kind: 'text', body: body.text };
         } else {
           const [channel] = await tx

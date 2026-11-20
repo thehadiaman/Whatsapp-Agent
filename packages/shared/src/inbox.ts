@@ -71,6 +71,30 @@ export const timelineMessageSchema = z.object({
       available: z.boolean(),
     })
     .nullable(),
+  /** Inbound voice notes: the speech-to-text result, shown beside the player. */
+  transcript: z
+    .discriminatedUnion('status', [
+      z.object({ status: z.literal('pending') }),
+      z.object({
+        status: z.literal('done'),
+        text: z.string(),
+        language: z.string(),
+        /** `transcribe` (Amazon Transcribe) or `simulator` (mock mode). */
+        engine: z.string(),
+      }),
+      z.object({ status: z.literal('failed'), reason: z.string() }),
+    ])
+    .nullable(),
+  /** Replies meant to be spoken: the voice used, or why they went as text. */
+  speech: z
+    .object({
+      language: z.string(),
+      voiceId: z.string().nullable(),
+      fallback: z.enum(['no_voice', 'too_long', 'too_large', 'synthesis_failed']).nullable(),
+      engine: z.string().nullable(),
+      durationMs: z.number().int().nullable(),
+    })
+    .nullable(),
   status: messageStatusSchema,
   error: z.object({ code: z.number().nullable(), message: z.string() }).nullable(),
   /** The assistant turn that wrote this reply; its receipt is "Explain this reply". */
@@ -117,6 +141,8 @@ export const conversationDetailSchema = z.object({
     reopenTemplateName: z.string().nullable(),
   }),
   windowClosesAt: z.iso.datetime({ offset: true }).nullable(),
+  /** The business sends voice replies (tenant setting); the composer offers one. */
+  voiceReplies: z.boolean(),
   timeline: z.array(timelineEntrySchema),
 });
 export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
@@ -124,7 +150,11 @@ export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
 // --- request bodies ---------------------------------------------------------------
 
 export const replyBodySchema = z.union([
-  z.strictObject({ text: z.string().trim().min(1).max(4096) }),
+  z.strictObject({
+    text: z.string().trim().min(1).max(4096),
+    /** Speak it as a voice note (Polly); it goes as text if it cannot be spoken. */
+    voice: z.boolean().optional(),
+  }),
   /** Outside the 24-hour window: the channel's approved reopen template. */
   z.strictObject({ template: z.literal('reopen') }),
 ]);

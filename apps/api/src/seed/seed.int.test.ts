@@ -29,7 +29,7 @@ beforeAll(async () => {
   for (const tenant of demoTenants('seed-test-password')) {
     tenantIds[tenant.slug] = await upsertTenant(migrator.db, tenant);
   }
-  await seedConversations(migrator.db, { bulk: 0 });
+  await seedConversations(migrator.db, storage, { bulk: 0 });
   await seedKnowledge(migrator.db, storage);
 });
 

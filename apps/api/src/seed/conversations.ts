@@ -1,5 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { schema, type Database } from '@app/db';
+import { mediaKey, type ObjectStorage } from '@app/pipeline';
+import { mockVoiceNote, VOICE_NOTE_MIME_TYPE, type SpokenLanguage } from '@app/voice';
 import { DEMO_BUSINESSES, DEMO_CUSTOMERS } from '@app/shared';
 import { eq, sql } from 'drizzle-orm';
 
@@ -12,7 +14,15 @@ import { eq, sql } from 'drizzle-orm';
 
 type Step =
   | { in: string; at: number }
-  | { assistant: string; at: number; status?: 'delivered' | 'read' }
+  /** A voice note, already transcribed (mock: the simulator's transcript). */
+  | { voice: string; language: SpokenLanguage; at: number }
+  | {
+      assistant: string;
+      at: number;
+      status?: 'delivered' | 'read';
+      /** A spoken reply that went as text because the language has no voice. */
+      noVoice?: SpokenLanguage;
+    }
   | { staff: string; by: string; at: number; status?: 'delivered' | 'read' }
   | {
       state: 'waiting_for_human' | 'human' | 'closed' | 'assistant';
@@ -160,6 +170,15 @@ const SCRIPTS: Record<string, Script[]> = {
           at: 10,
           status: 'delivered',
         },
+        // "There's no egg in this cake, right?"
+        { voice: 'ഈ കേക്കിൽ മുട്ട ഇല്ലല്ലോ, അല്ലേ?', language: 'ml', at: 4 },
+        {
+          // "No, the eggless chocolate cake has no egg."
+          assistant: 'ഇല്ല, എഗ്ഗ്‌ലെസ് ചോക്ലേറ്റ് കേക്കിൽ മുട്ട ഇല്ല.',
+          at: 4,
+          status: 'delivered',
+          noVoice: 'ml',
+        },
       ],
     },
     {
@@ -223,7 +242,13 @@ async function nextNumber(db: Database, tenantId: string): Promise<number> {
 
 async function writeScript(
   db: Database,
-  ctx: { tenantId: string; channelId: string; customerId: string; users: Map<string, string> },
+  ctx: {
+    tenantId: string;
+    channelId: string;
+    customerId: string;
+    users: Map<string, string>;
+    storage: ObjectStorage;
+  },
   steps: Step[],
   now: number,
 ): Promise<void> {
@@ -277,7 +302,43 @@ async function writeScript(
       channelId: ctx.channelId,
       conversationId: conversation.id,
     };
-    if ('in' in step) {
+    if ('voice' in step) {
+      // The file the simulator would have sent, in our storage like any voice note.
+      const id = randomUUID();
+      const bytes = mockVoiceNote({ text: step.voice, language: step.language });
+      const key = mediaKey(ctx.tenantId, id);
+      await ctx.storage.put(key, bytes, VOICE_NOTE_MIME_TYPE);
+      await db.insert(schema.messages).values({
+        ...base,
+        id,
+        direction: 'inbound',
+        kind: 'audio',
+        senderType: 'customer',
+        waMessageId: wamid(),
+        media: {
+          id: `seed-${id}`,
+          mimeType: VOICE_NOTE_MIME_TYPE,
+          sha256: null,
+          caption: null,
+          voice: true,
+          storageKey: key,
+          sizeBytes: bytes.byteLength,
+        },
+        transcript: {
+          status: 'done',
+          text: step.voice,
+          language: step.language,
+          engine: 'simulator',
+          confidence: null,
+        },
+        status: 'received',
+        statusAt: at,
+        waTimestamp: at,
+        createdAt: at,
+      });
+      lastInbound = at;
+      lastMessage = at;
+    } else if ('in' in step) {
       await db.insert(schema.messages).values({
         ...base,
         direction: 'inbound',
@@ -302,6 +363,10 @@ async function writeScript(
         senderUserId: isStaff ? userId(step.by) : null,
         waMessageId: wamid(),
         body: isStaff ? step.staff : step.assistant,
+        speech:
+          !isStaff && step.noVoice
+            ? { language: step.noVoice, voiceId: null, fallback: 'no_voice' }
+            : null,
         status: step.status ?? 'delivered',
         statusAt: at,
         outboxSeq: seq++,
@@ -403,7 +468,7 @@ const OPENINGS = [
 
 async function seedBulk(
   db: Database,
-  ctx: { tenantId: string; channelId: string; users: Map<string, string> },
+  ctx: { tenantId: string; channelId: string; users: Map<string, string>; storage: ObjectStorage },
   count: number,
   now: number,
 ): Promise<void> {
@@ -448,6 +513,7 @@ async function seedBulk(
  */
 export async function seedConversations(
   db: Database,
+  storage: ObjectStorage,
   options: { bulk: number; now?: number },
 ): Promise<void> {
   const now = options.now ?? Date.now();
@@ -482,13 +548,18 @@ export async function seedConversations(
       const customerId = await upsertCustomer(db, tenant.id, demo);
       await writeScript(
         db,
-        { tenantId: tenant.id, channelId: channel.id, customerId, users },
+        { tenantId: tenant.id, channelId: channel.id, customerId, users, storage },
         script.steps,
         now,
       );
     }
     if (business.slug === 'qamar-phone-corner' && options.bulk > 0) {
-      await seedBulk(db, { tenantId: tenant.id, channelId: channel.id, users }, options.bulk, now);
+      await seedBulk(
+        db,
+        { tenantId: tenant.id, channelId: channel.id, users, storage },
+        options.bulk,
+        now,
+      );
     }
   }
 }

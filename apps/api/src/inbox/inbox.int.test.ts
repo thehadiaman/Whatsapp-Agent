@@ -318,6 +318,103 @@ describe('replies', () => {
   });
 });
 
+describe('voice', () => {
+  const setVoiceReplies = (on: boolean) =>
+    db.db.update(schema.tenants).set({ voiceReplies: on }).where(eq(schema.tenants.id, a.id));
+
+  async function lastReply(conversationId: string) {
+    const rows = await db.db
+      .select()
+      .from(schema.messages)
+      .where(eq(schema.messages.conversationId, conversationId));
+    return rows.find((m) => m.direction === 'outbound');
+  }
+
+  it('a staff voice reply is queued to be spoken in the language it is written in', async () => {
+    await setVoiceReplies(true);
+    try {
+      const id = await conversation(a, { state: 'human', holderEmail: a.agentEmail });
+      const sent = await post(`/api/conversations/${id}/replies`, cookies['agentA']!, {
+        text: 'Your cake is ready for pickup.',
+        voice: true,
+      });
+      expect(sent.status).toBe(202);
+      expect(await lastReply(id)).toMatchObject({
+        kind: 'audio',
+        body: 'Your cake is ready for pickup.',
+        speech: { language: 'en', voiceId: 'Kajal', fallback: null },
+      });
+
+      // Malayalam has no Polly voice: queued as text, saying why.
+      const ml = await conversation(a, { state: 'human', holderEmail: a.agentEmail });
+      await post(`/api/conversations/${ml}/replies`, cookies['agentA']!, {
+        text: 'കേക്ക് തയ്യാറാണ്.',
+        voice: true,
+      });
+      expect(await lastReply(ml)).toMatchObject({
+        kind: 'text',
+        speech: { language: 'ml', voiceId: null, fallback: 'no_voice' },
+      });
+    } finally {
+      await setVoiceReplies(false);
+    }
+  });
+
+  it('refuses a voice reply when the business has voice replies off', async () => {
+    const id = await conversation(a, { state: 'human', holderEmail: a.agentEmail });
+    const refused = await post(`/api/conversations/${id}/replies`, cookies['agentA']!, {
+      text: 'Hello',
+      voice: true,
+    });
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.json)).toContain('Voice replies are off');
+    expect(await lastReply(id)).toBeUndefined();
+  });
+
+  it('shows a voice note with its transcript in the timeline and the list', async () => {
+    const id = await conversation(a);
+    await db.db.insert(schema.messages).values({
+      tenantId: a.id,
+      channelId: a.channelId,
+      conversationId: id,
+      direction: 'inbound',
+      kind: 'audio',
+      senderType: 'customer',
+      waMessageId: `wamid.V${digits(20)}`,
+      status: 'received',
+      waTimestamp: new Date(),
+      media: {
+        id: '7',
+        mimeType: 'audio/ogg; codecs=opus',
+        sha256: null,
+        caption: null,
+        voice: true,
+      },
+      transcript: {
+        status: 'done',
+        text: 'Is the cake eggless?',
+        language: 'en',
+        engine: 'simulator',
+        confidence: null,
+      },
+    });
+    const detail = conversationDetailSchema.parse(
+      (await call(api, `/api/conversations/${id}`, { cookie: cookies['agentA']! })).json,
+    );
+    expect(detail.voiceReplies).toBe(false);
+    expect(detail.timeline.at(-1)).toMatchObject({
+      kind: 'audio',
+      media: { voice: true, available: false },
+      transcript: { status: 'done', text: 'Is the cake eggless?', engine: 'simulator' },
+      speech: null,
+    });
+    const list = (await call(api, '/api/conversations', { cookie: cookies['agentA']! }))
+      .json as unknown[];
+    const item = list.map((i) => conversationListItemSchema.parse(i)).find((i) => i.id === id);
+    expect(item?.lastMessage?.preview).toBe('Voice note: Is the cake eggless?');
+  });
+});
+
 describe('rate limits', () => {
   it('limits notes to 30 a minute per person', async () => {
     const id = await conversation(a);
