@@ -438,9 +438,126 @@ Meta facts were checked against Meta's documentation on 2026-11-17: webhook and 
 - **No presence or typing indicators.** Two people pressing Take over at once is safe: the first wins, and the second gets a 409 with the reason.
 - **The WebSocket upgrade through Caddy is unverified** until Caddy exists (phase 9, D-051).
 
+## Phase 4: knowledge base, assistant and Bedrock (2026-11-20)
+
+### D-059 Claude in Amazon Bedrock through the Messages API, behind a model port
+
+- **Chosen:**
+  - A model port whose shape mirrors the Claude Messages API (text, tool_use and tool_result blocks). The scripted mock implements it now; the live adapter (phase 7) is `AnthropicBedrockMantle` from `@anthropic-ai/bedrock-sdk`, a thin mapping.
+  - Model IDs `anthropic.claude-haiku-5-5` and `anthropic.claude-haiku-4-5`. In Mumbai (`ap-south-1`) Claude in Amazon Bedrock has the global endpoint only, at no premium; regional endpoints cost 10% more. The IAM action is `bedrock-mantle:CreateInference`.
+  - Every model response is parsed with zod before use. A malformed one hands the conversation to a person at once, without retrying.
+- **Rejected:** the Converse and InvokeModel APIs on `bedrock-runtime`. Anthropic's Bedrock guide points new code at the Messages API endpoint, and Converse would need its own request and response mapping.
+- **Checked on 2026-11-20** against Anthropic's "Claude in Amazon Bedrock" page.
+- **Open for phases 7 and 8:**
+  - Current Anthropic SDKs send API version `2026-10-21`, which Bedrock accepts only for Claude 4.7 and later. The Haiku 4.5 comparison in the evals may need a pinned older SDK.
+  - Bedrock's price for Haiku 5.5 could not be confirmed. Turns are costed from a price table that starts with Anthropic's list prices, and an unknown model refuses to be costed rather than recording zero.
+
+### D-060 Embeddings: 1,024 dimensions now, the live model chosen by an eval
+
+- **Chosen:**
+  - `vector(1024)`, the default size of Amazon Titan Text Embeddings V2 and of Cohere Embed Multilingual v3, so either fits without a migration.
+  - Each passage records the model that embedded it.
+  - Each embedder declares its own relevance floor, because similarity scales differ between models.
+- **Candidates for phase 7** (AWS model pages, read 2026-11-20):
+  - Titan V2 (`amazon.titan-embed-text-v2:0`, 8,192 tokens) lists Malayalam, Arabic and Hindi, but AWS warns that cross-language queries give sub-optimal results.
+  - Cohere Embed Multilingual v3 is built for cross-lingual search but reads only 512 tokens.
+  - Cohere Embed v4 (`global.cohere.embed-v4:0`, 128K tokens) reaches Mumbai through global routing.
+  - Both Cohere models are billed through AWS Marketplace.
+- **Why the eval decides:** a shop's catalogue is usually in English while customers ask in Malayalam, Arabic or Hinglish. That cross-lingual case is the one to measure before choosing.
+- **Mock:** the hashing trick over words and character trigrams. It is deterministic and offline, and knows no synonyms and no other language.
+
+### D-061 Hybrid retrieval
+
+- **Chosen:**
+  - The 20 nearest passages by embedding, plus the 20 best Postgres full-text matches (the `simple` configuration, words joined with OR, a small stop list).
+  - These are fused by reciprocal rank (k = 60). The top five are read most similar first, so their order and the scores shown with them agree.
+- **Rejected:**
+  - Vectors alone: they miss exact product names, model numbers and order numbers.
+  - The `english` text-search configuration: it stems English only, while `simple` treats every script alike.
+
+### D-062 Exact nearest-neighbour search, no ANN index
+
+- **Chosen:** no HNSW index. A business has hundreds to a few thousand passages, which Postgres scans exactly in milliseconds.
+- **Why:** an approximate index searches before row-level security filters out other businesses' rows, so a small tenant could get too few results. Exact search is simple and always correct.
+- **Revisit:** above about 50,000 passages for one business, with pgvector 0.8's iterative index scans.
+
+### D-063 Prompt injection is contained in code, not only in the prompt
+
+- **Chosen:**
+  - **Prompt structure:** the system prompt holds only the rules and the business profile. Customer messages and passages go in tagged data blocks, with `<`, `>` and `&` escaped, so a document cannot close its own block.
+  - **Tool authorisation:** `lookup_order` returns an order only to the customer who placed it. Anyone else's order looks exactly like no order.
+  - **Figure guard:** every number in a reply must appear in the passages, the tool results or the conversation, in any digit script. Otherwise the reply is not sent and a person takes over. False positives fail safe.
+- **Tests:**
+  - A scripted "obedient" model that follows planted instructions shows these guards hold whatever the model does.
+  - The escaping is unit-tested against a planted closing tag.
+- **Limit:** numbers written as words are not caught, and how well the real model resists injection is measured by the evals (phase 8).
+
+### D-064 One answer per burst, never two
+
+- **Chosen:**
+  - Every customer message queues a turn, delayed `ASSISTANT_DEBOUNCE_MS` (1.5 s) and keyed by the message ID.
+  - A turn answers only if its message is the newest one not yet answered, so a burst of messages gets one reply.
+  - `assistant_turns.trigger_message_id` is unique, so a retry cannot answer twice.
+  - Duplicate webhook deliveries re-queue the turn. That is what recovers from a crash between commit and enqueue.
+  - The sweeper also re-queues unanswered messages from the last hour.
+- **Tests:** a burst, a duplicated delivery, and a deleted job recovered by the sweep.
+
+### D-065 Limits hand over; they never go silent
+
+- **Chosen:**
+  - **Daily budget:** a token budget per business per local day (default 300,000). When it is used up, the customer gets a notice and the conversation waits for a person.
+  - **Rate limit:** 20 assistant turns per customer per hour. Beyond that the assistant stops replying with no message, which avoids feeding a loop or spam, and a person takes a look.
+  - **Handoff notice:** in English, Hindi, Hinglish, Malayalam or Arabic, chosen by script without a model.
+  - **Kill switch:** `ASSISTANT_ENABLED` stops new turns everywhere.
+- **Known race:** two turns checking the budget at once can both proceed, overshooting by one turn's tokens.
+
+### D-066 The handoff notice goes out while a person is awaited
+
+- **Changed:** a queued assistant message is now cancelled only when a person holds the conversation or it is closed, not when it is merely waiting.
+- **Why:** phase 2's send-time rule cancelled the "a person will reply here soon" notice the moment the handoff it announced took effect. The brief forbids sending while a person _holds_ the conversation, and waiting is not holding.
+
+### D-067 Reading knowledge files
+
+- **Chosen:**
+  - **PDF:** `pdfjs-dist` (Mozilla's reference implementation), text only. A scanned PDF is refused with advice (no OCR, P-06).
+  - **Word:** `mammoth`.
+  - **CSV:** a small RFC 4180 parser instead of a third dependency. One passage per catalogue row, so a price is always retrieved with its product.
+  - **Limits:** 10 MB, with the type decided by file extension.
+  - **Passages:** up to 1,200 characters, split at sentence ends in Latin, Devanagari and Arabic scripts.
+  - **Versions:** a new version replaces the passages in one transaction, and a failed source keeps none.
+- **Leaner install:** pdfjs's optional native canvas binary (35 MB, used only to render pages) is excluded with `ignoredOptionalDependencies`. pdfjs prints a one-off notice about rendering the first time the worker reads a PDF.
+
+### D-068 Live mode never answers with the mock
+
+- **Chosen:** until the Bedrock adapters exist, live mode uses an unconfigured model that makes every turn hand over to a person.
+- **Why:** answering a real customer with the scripted mock would be worse than no answer.
+
+### D-069 Receipts are records
+
+- **Chosen:**
+  - `assistant_turns` is append-only for the app; only the reply link can be updated.
+  - The receipt says what it is: mock token counts are labelled "estimated", the mock costs "$0 · mock model", and seeded sample replies say they have no receipt rather than showing invented numbers.
+
+### D-070 One media directory for the API and the worker
+
+- **Changed:** `make` resolves the storage path from the repository root, and Compose mounts one named volume in the API, worker and seed.
+- **Why:** this was a bug from phase 2. In `make dev` each app ran from its own folder, so the relative `MEDIA_STORAGE_DIR` gave the worker and the API different directories. Under Compose each container had its own `/tmp`. Customer photos were stored where the API could not serve them; tests passed because they share one temporary folder.
+
+### D-071 Typed linting gets a 4 GB heap
+
+- **Why:** linting 135 files across nine TypeScript projects peaks at 2.6 GB, past Node's default heap here.
+
+### Known gaps after phase 4
+
+- **The mock is wiring, not quality.** Replying in the customer's language, declining off-topic requests and resisting injection are only as good as the real model. The evals (phase 8) measure them.
+- **Cross-lingual retrieval** is the main quality risk (D-060).
+- **Not built:** the "assistant is writing…" state from DESIGN.md.
+- **Media and orders:** customer photos and documents reach the model only as "[Photo]" markers (P-07). Orders are seeded; importing them comes with settings (phase 6).
+- **Unverified:** Bedrock prices and the Haiku 4.5 SDK version question (D-059).
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). The rest are still open.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). The rest are still open.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.

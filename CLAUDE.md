@@ -56,13 +56,14 @@ Multi-tenant WhatsApp AI support desk. The full brief is `docs/BRIEF.md`; decisi
 - `make setup` — install dependencies, enable git hooks, create `.env` from `.env.example`.
 - `make db` — database roles, migrations and demo seed (idempotent). `make dev` runs it first. `make db SEED_BULK_CONVERSATIONS=300` adds generated conversations for the 300-conversation state (after `make reset`, since the seed skips businesses that already have conversations).
 - `make dev` — Postgres and Redis in Docker, all apps in watch mode (mock mode). Demo accounts are listed on the sign-in page.
-- Customer side: the simulator at http://localhost:4010 (pick a customer, write as them; fault controls on the right). Its control API (`/control/*`) is what tests use.
+- Customer side: the simulator at http://localhost:4010 (pick a customer, write as them; fault controls on the right). Its control API (`/control/*`) is what tests use. In mock mode the assistant answers from the seeded knowledge base (Knowledge page) with a scripted model; `ASSISTANT_ENABLED=false` stops it.
 - Port 3000 taken? `make dev WEB_PORT=3300 PUBLIC_APP_URL=http://localhost:3300` (same for `make e2e`); command-line values override `.env`.
 - `make check` — format check, lint, typecheck, unit tests, commit-message tests.
 - `make test-int` — integration tests against real Postgres and Redis: row-level security, API isolation and auth, and the pipeline (dedupe, ordering, retries, dead letters, window, soak with faults, no outbound network).
 - `make e2e` — Playwright at 1440 and 390 px; screenshots land in `apps/web/e2e/screenshots/`.
 - `make up` / `make down` — everything from the production images.
 - Tenant data is only reached through `TenantDb.run()` (API) or `withTenant()` (`@app/db`). Never connect the app as `app_migrator`. Inside one, await queries one at a time: no `Promise.all` on a transaction (D-058).
+- Pipeline tests that turn the assistant on must sweep by hand (`sweepIntervalMs`): the sweeper is fleet-wide and would answer conversations other test files left behind (D-046, D-064).
 - Health: API `/health` and `/ready` on 4000, worker `/health` on `WORKER_HEALTH_PORT` (4020), simulator `/health` on 4010. Through the Next.js proxy the inbox socket uses long-polling, not WebSocket (D-051).
 - Scripted find-and-replace edits must assert that they matched; a silent miss cost a debugging round in phase 2.
 - pnpm gotcha: `setup` is a built-in pnpm command. Call package scripts with `pnpm --filter X run <script>`.
