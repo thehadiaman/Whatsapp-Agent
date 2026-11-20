@@ -1,4 +1,19 @@
-import { schema, withTenant, type StoredError, type Transaction } from '@app/db';
+import {
+  schema,
+  withTenant,
+  type SpeechFallback,
+  type StoredError,
+  type StoredMedia,
+  type StoredSpeech,
+  type Transaction,
+} from '@app/db';
+import {
+  POLLY_VOICES,
+  readOggOpus,
+  SPOKEN_LANGUAGES,
+  VOICE_NOTE_PLAYABLE_BYTES,
+  type SpokenLanguage,
+} from '@app/voice';
 import { GraphApiError, type OutboundContent, type Recipient } from '@app/whatsapp';
 import { DelayedError, UnrecoverableError, type Job } from 'bullmq';
 import { and, asc, eq, gte, lt, sql } from 'drizzle-orm';
@@ -11,14 +26,19 @@ import {
   decideSend,
   maySend,
   nextStatus,
+  planSpeech,
   windowState,
   type MessageStatus,
 } from './rules.js';
 import { applyStatusEvents } from './statuses.js';
+import { mediaKey } from './storage.js';
 
 export type Sender = { type: 'assistant' } | { type: 'user'; userId: string };
 export type ReplyContent =
-  { kind: 'text'; body: string } | { kind: 'template'; name: string; languageCode: string };
+  | { kind: 'text'; body: string }
+  | { kind: 'template'; name: string; languageCode: string }
+  /** Text to speak as a voice note; it goes as text when it cannot be spoken. */
+  | { kind: 'voice'; body: string; language: SpokenLanguage };
 
 export class OwnershipError extends Error {
   constructor(message: string) {
@@ -59,8 +79,21 @@ export async function queueReply(
         : 'Take over the conversation before replying.',
     );
   }
-  if (input.content.kind === 'text' && !windowState(conversation.lastInboundAt, input.now).open) {
+  // Only an approved template may go outside the window; a voice note is free-form too.
+  if (
+    input.content.kind !== 'template' &&
+    !windowState(conversation.lastInboundAt, input.now).open
+  ) {
     throw new WindowClosedError();
+  }
+
+  const content = input.content;
+  let kind: 'text' | 'template' | 'audio' = content.kind === 'voice' ? 'audio' : content.kind;
+  let speech: StoredSpeech | null = null;
+  if (content.kind === 'voice') {
+    const plan = planSpeech(content.body, content.language);
+    speech = { language: plan.language, voiceId: plan.voiceId, fallback: plan.fallback };
+    if (!plan.voiceId) kind = 'text';
   }
 
   const seq = conversation.nextOutboxSeq;
@@ -76,11 +109,13 @@ export async function queueReply(
       channelId: conversation.channelId,
       conversationId: conversation.id,
       direction: 'outbound',
-      kind: input.content.kind,
+      kind,
       senderType: input.sender.type,
       senderUserId: input.sender.type === 'user' ? input.sender.userId : null,
-      body: input.content.kind === 'text' ? input.content.body : null,
-      templateName: input.content.kind === 'template' ? input.content.name : null,
+      // A voice reply keeps its text (brief §4): it is what the inbox shows.
+      body: content.kind === 'template' ? null : content.body,
+      templateName: content.kind === 'template' ? content.name : null,
+      speech,
       status: 'queued',
       statusAt: input.now,
       outboxSeq: seq,
@@ -101,6 +136,8 @@ type Prepared =
       channelId: string;
       recipient: Recipient;
       content: OutboundContent;
+      /** Audio still to be made or uploaded before sending. */
+      voice: { body: string; speech: StoredSpeech; media: StoredMedia | null } | null;
       attempt: number;
     };
 
@@ -179,7 +216,7 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
     );
     if (decision.action === 'wait') return { kind: 'wait', until: decision.until };
 
-    if (message.kind === 'text' && !windowState(conversation.lastInboundAt, now).open) {
+    if (message.kind !== 'template' && !windowState(conversation.lastInboundAt, now).open) {
       await fail(tx, message.id, now, { code: 131047, message: new WindowClosedError().message });
       return {
         kind: 'skip',
@@ -218,6 +255,10 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
       channelId: channel.id,
       recipient,
       content,
+      voice:
+        message.kind === 'audio' && message.speech
+          ? { body: message.body ?? '', speech: message.speech, media: message.media }
+          : null,
       attempt: message.attempts + 1,
     };
   });
@@ -236,9 +277,13 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
   }
 
   try {
-    const wamid = await deps.providers
-      .client(prepared.provider)
-      .sendMessage(prepared.phoneNumberId, prepared.recipient, prepared.content);
+    const client = deps.providers.client(prepared.provider);
+    const content = prepared.voice
+      ? await voiceContent(deps, tenantId, messageId, prepared.voice, (file) =>
+          client.uploadMedia(prepared.phoneNumberId, file),
+        )
+      : prepared.content;
+    const wamid = await client.sendMessage(prepared.phoneNumberId, prepared.recipient, content);
     await withTenant(deps.db, tenantId, async (tx) => {
       const [current] = await tx
         .select({ status: schema.messages.status })
@@ -264,6 +309,95 @@ export async function sendOutbound(deps: PipelineDeps, job: Job, token?: string)
   } catch (error) {
     await handleSendError(deps, job, tenantId, messageId, prepared.conversationId, error);
   }
+}
+
+/**
+ * Makes and uploads the voice note for a spoken reply, reusing what an
+ * earlier attempt already did. If it cannot be spoken (synthesis failed, or
+ * the note is too big for WhatsApp to play inline), the message becomes text
+ * and says why: the customer gets the answer either way.
+ */
+async function voiceContent(
+  deps: PipelineDeps,
+  tenantId: string,
+  messageId: string,
+  voice: { body: string; speech: StoredSpeech; media: StoredMedia | null },
+  upload: (file: { bytes: Uint8Array; mimeType: string; filename: string }) => Promise<string>,
+): Promise<OutboundContent> {
+  if (voice.media?.id) return { kind: 'audio', mediaId: voice.media.id, voice: true };
+
+  const asText = async (fallback: SpeechFallback): Promise<OutboundContent> => {
+    await withTenant(deps.db, tenantId, (tx) =>
+      tx
+        .update(schema.messages)
+        .set({ kind: 'text', speech: { ...voice.speech, fallback } })
+        .where(eq(schema.messages.id, messageId)),
+    );
+    deps.logger.warn({ messageId, fallback }, 'voice reply sent as text');
+    return { kind: 'text', body: voice.body };
+  };
+
+  const key = mediaKey(tenantId, messageId);
+  let audio = await deps.storage.get(key);
+  if (!audio) {
+    const pollyVoice = isSpokenLanguage(voice.speech.language)
+      ? POLLY_VOICES[voice.speech.language]
+      : null;
+    if (!pollyVoice) return asText('no_voice');
+    try {
+      const made = await deps.voice.tts.synthesize({ text: voice.body, voice: pollyVoice });
+      audio = { bytes: made.bytes, contentType: made.mimeType };
+    } catch (error) {
+      // Falling back at once beats retrying: the customer is waiting for an answer.
+      deps.logger.warn(
+        { messageId, err: error instanceof Error ? error.message.slice(0, 200) : 'unknown' },
+        'speech synthesis failed',
+      );
+      return asText('synthesis_failed');
+    }
+    if (audio.bytes.byteLength > VOICE_NOTE_PLAYABLE_BYTES) return asText('too_large');
+    await deps.storage.put(key, audio.bytes, audio.contentType);
+  }
+
+  let durationMs: number | undefined;
+  try {
+    durationMs = readOggOpus(audio.bytes).durationMs;
+  } catch {
+    durationMs = undefined;
+  }
+  // WhatsApp lists voice notes as audio/ogg (Opus only); the codec parameter is ours.
+  const mediaId = await upload({
+    bytes: audio.bytes,
+    mimeType: 'audio/ogg',
+    filename: 'reply.ogg',
+  });
+  const media: StoredMedia = {
+    id: mediaId,
+    mimeType: audio.contentType,
+    sha256: null,
+    caption: null,
+    voice: true,
+    storageKey: key,
+    sizeBytes: audio.bytes.byteLength,
+  };
+  await withTenant(deps.db, tenantId, (tx) =>
+    tx
+      .update(schema.messages)
+      .set({
+        media,
+        speech: {
+          ...voice.speech,
+          engine: deps.voice.tts.engine,
+          ...(durationMs === undefined ? {} : { durationMs }),
+        },
+      })
+      .where(eq(schema.messages.id, messageId)),
+  );
+  return { kind: 'audio', mediaId, voice: true };
+}
+
+function isSpokenLanguage(value: string): value is SpokenLanguage {
+  return (SPOKEN_LANGUAGES as readonly string[]).includes(value);
 }
 
 async function handleSendError(

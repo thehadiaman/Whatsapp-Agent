@@ -8,6 +8,7 @@ export const QUEUES = {
   media: 'whatsapp-media',
   assistant: 'assistant-turns',
   knowledge: 'knowledge-ingest',
+  transcription: 'voice-transcription',
 } as const;
 
 // Job data is validated when a job is taken, like any other boundary (brief §7).
@@ -28,6 +29,7 @@ export interface Queues {
   media: Queue;
   assistant: Queue;
   knowledge: Queue;
+  transcription: Queue;
   close(): Promise<void>;
 }
 
@@ -68,12 +70,19 @@ export function createQueues(
     prefix,
     defaultJobOptions: { ...keep, attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
   });
+  // Transcribe jobs take seconds to minutes; the last attempt hands the note to a person.
+  const transcription = new Queue(QUEUES.transcription, {
+    connection,
+    prefix,
+    defaultJobOptions: { ...keep, attempts: 4, backoff: { type: 'exponential', delay: 2_000 } },
+  });
   return {
     webhooks,
     outbound,
     media,
     assistant,
     knowledge,
+    transcription,
     close: async () => {
       await Promise.all([
         webhooks.close(),
@@ -81,6 +90,7 @@ export function createQueues(
         media.close(),
         assistant.close(),
         knowledge.close(),
+        transcription.close(),
       ]);
     },
   };
@@ -100,13 +110,27 @@ export async function enqueueMedia(queues: Queues, job: TenantMessageJob): Promi
   await queues.media.add('fetch', job, { jobId: job.messageId });
 }
 
-/** Keyed by message ID: a duplicate webhook or a sweep cannot answer a message twice. */
+/**
+ * Keyed by message ID: a duplicate webhook or a sweep cannot answer a message
+ * twice. `after` names a later event that needs a fresh job for the same
+ * message (a transcript arriving), since a finished job's ID stays taken; the
+ * turn's unique trigger still allows one answer.
+ */
 export async function enqueueAssistant(
   queues: Queues,
   job: AssistantJob,
   delayMs: number,
+  after?: string,
 ): Promise<void> {
-  await queues.assistant.add('turn', job, { jobId: job.messageId, delay: delayMs });
+  await queues.assistant.add('turn', job, {
+    jobId: after ? `${job.messageId}-after-${after}` : job.messageId,
+    delay: delayMs,
+  });
+}
+
+/** One transcription per voice note. */
+export async function enqueueTranscription(queues: Queues, job: TenantMessageJob): Promise<void> {
+  await queues.transcription.add('transcribe', job, { jobId: job.messageId });
 }
 
 /** Keyed by source and version: an edit while reading queues the new version separately. */

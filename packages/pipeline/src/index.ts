@@ -14,3 +14,4 @@ export * from './rules.js';
 export * from './statuses.js';
 export * from './storage.js';
 export * from './workers.js';
+export * from './voice.js';

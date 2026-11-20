@@ -3,6 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
+import { MockSpeechToText, MockTextToSpeech } from '@app/voice';
 import { MockChatModel, MockEmbedder } from '@app/assistant';
 import { createDb, schema, type DbHandle } from '@app/db';
 import { testDatabaseUrls } from '@app/db/testing';
@@ -148,6 +149,7 @@ beforeAll(async () => {
         embedder: new MockEmbedder(),
         settings: { enabled: false, debounceMs: 0, maxOutputTokens: 1024 },
       },
+      voice: { stt: new MockSpeechToText(), tts: new MockTextToSpeech() },
     },
     { connection, prefix },
   );

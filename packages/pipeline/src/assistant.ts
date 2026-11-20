@@ -18,6 +18,7 @@ import {
   type ToolCall,
 } from '@app/assistant';
 import { schema, withTenant, type Transaction } from '@app/db';
+import { spokenLanguageOf } from '@app/voice';
 import type { Job } from 'bullmq';
 import { and, count, desc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
 import { z, ZodError } from 'zod';
@@ -26,6 +27,7 @@ import { nowOf, type PipelineDeps } from './deps.js';
 import { retrievePassages } from './knowledge.js';
 import { OwnershipError, queueReply } from './outbound.js';
 import { assistantJobSchema, enqueueOutbound, type AssistantJob } from './queues.js';
+import { assistantSpeaks } from './rules.js';
 
 type Outcome = (typeof schema.assistantOutcome.enumValues)[number];
 
@@ -40,9 +42,20 @@ interface Context {
   budget: number;
   turnsPerHour: number;
   customerId: string;
+  /** Answer a voice note with a voice note (tenant setting). */
+  voiceReplies: boolean;
   /** Customer messages since the business last wrote, oldest first. */
-  pending: { id: string; text: string }[];
+  pending: PendingMessage[];
   history: HistoryMessage[];
+}
+
+interface PendingMessage {
+  id: string;
+  /** As the model sees it, e.g. "[Voice note] …". */
+  text: string;
+  /** The customer's own words, for language detection and retrieval. */
+  words: string;
+  voice: 'none' | 'transcribed' | 'untranscribed';
 }
 
 function describe(message: typeof schema.messages.$inferSelect): string {
@@ -55,8 +68,13 @@ function describe(message: typeof schema.messages.$inferSelect): string {
       return `[Document${message.media?.filename ? ` ${message.media.filename}` : ''}${
         message.media?.caption ? `: ${message.media.caption}` : ''
       }]`;
-    case 'audio':
-      return '[Voice note]';
+    case 'audio': {
+      const t = message.transcript;
+      if (t?.status === 'done') return `[Voice note] ${t.text}`;
+      return t?.status === 'failed'
+        ? '[Voice note that could not be transcribed]'
+        : '[Voice note, not transcribed yet]';
+    }
     case 'template':
       return `[Template message: ${message.templateName ?? 'unnamed'}]`;
     default:
@@ -112,6 +130,8 @@ async function loadContext(tx: Transaction, job: AssistantJob): Promise<Context 
   if (pendingRows.at(-1)?.id !== job.messageId) return null;
   const first = pendingRows[0];
   if (!first) return null;
+  // A voice note still being transcribed: its transcript queues this turn again.
+  if (pendingRows.some((row) => row.transcript?.status === 'pending')) return null;
 
   const earlier = await tx
     .select()
@@ -136,7 +156,26 @@ async function loadContext(tx: Transaction, job: AssistantJob): Promise<Context 
     budget: tenant.assistantDailyTokenBudget,
     turnsPerHour: tenant.assistantTurnsPerCustomerHour,
     customerId: conversation.customerId,
-    pending: pendingRows.map((row) => ({ id: row.id, text: describe(row) })),
+    voiceReplies: tenant.voiceReplies,
+    pending: pendingRows.map((row): PendingMessage => {
+      const transcript = row.kind === 'audio' ? row.transcript : null;
+      return {
+        id: row.id,
+        text: describe(row),
+        words:
+          transcript?.status === 'done'
+            ? transcript.text
+            : row.kind === 'audio'
+              ? ''
+              : describe(row),
+        voice:
+          row.kind !== 'audio'
+            ? 'none'
+            : transcript?.status === 'done'
+              ? 'transcribed'
+              : 'untranscribed',
+      };
+    }),
     history: earlier.reverse().map((row) => ({
       from: row.direction === 'inbound' ? ('customer' as const) : ('business' as const),
       text: describe(row),
@@ -258,7 +297,10 @@ export async function runAssistantTurn(
   const context = await withTenant(deps.db, job.tenantId, (tx) => loadContext(tx, job));
   if (!context) return null;
 
-  const customerText = context.pending.map((p) => p.text).join('\n');
+  const customerText = context.pending
+    .map((p) => p.words)
+    .filter(Boolean)
+    .join('\n');
   const notice = handoffNotice(customerText);
   const record: TurnRecord = {
     outcome: 'replied',
@@ -301,6 +343,14 @@ export async function runAssistantTurn(
       handoff: 'Many messages in an hour; the assistant stopped replying',
       detail: `${String(limits.turnsThisHour)} turns in the last hour`,
     });
+  } else if (context.pending.some((p) => p.voice === 'untranscribed')) {
+    // Never guess what someone said: a person listens to it.
+    Object.assign(record, {
+      outcome: 'handed_off',
+      reply: notice.text,
+      handoff: 'Voice note could not be transcribed',
+      detail: 'a voice note in this turn has no transcript',
+    });
   } else if (limits.tokensToday >= context.budget) {
     Object.assign(record, {
       outcome: 'budget_exhausted',
@@ -329,7 +379,7 @@ async function answer(
     Object.assign(record, { outcome, reply: noticeText, handoff, detail, basis: null });
   };
   try {
-    const query = context.pending.map((p) => p.text).join('\n');
+    const query = context.pending.map((p) => p.words).join('\n');
     record.passages = await withTenant(deps.db, job.tenantId, (tx) =>
       retrievePassages(tx, deps.assistant.embedder, query),
     );
@@ -437,11 +487,18 @@ async function commit(
   const result = await withTenant(deps.db, job.tenantId, async (tx) => {
     let replyId: string | null = null;
     if (record.reply) {
+      // Spoken back when the customer spoke, if the business allows it.
+      const language = spokenLanguageOf(record.language ?? '');
+      const speak =
+        language !== null &&
+        assistantSpeaks(context.voiceReplies, context.pending.at(-1)?.voice === 'transcribed');
       try {
         replyId = await queueReply(tx, {
           conversationId: job.conversationId,
           sender: { type: 'assistant' },
-          content: { kind: 'text', body: record.reply },
+          content: speak
+            ? { kind: 'voice', body: record.reply, language }
+            : { kind: 'text', body: record.reply },
           now,
         });
       } catch (error) {

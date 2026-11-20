@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assistantSpeaks,
   canTransition,
   decideSend,
   assistantMessageMayGo,
   maySend,
   nextStatus,
+  planSpeech,
   windowState,
   WINDOW_MS,
   type MessageStatus,
@@ -134,5 +136,35 @@ describe('assistantMessageMayGo', () => {
     expect(assistantMessageMayGo('waiting_for_human')).toBe(true);
     expect(assistantMessageMayGo('human')).toBe(false);
     expect(assistantMessageMayGo('closed')).toBe(false);
+  });
+});
+
+describe('voice replies', () => {
+  it('speaks with the voice for the language, and goes as text where there is none', () => {
+    expect(planSpeech('Haan, bilkul.', 'hi')).toEqual({
+      language: 'hi',
+      voiceId: 'Kajal',
+      fallback: null,
+    });
+    expect(planSpeech('نعم', 'ar')).toMatchObject({ voiceId: 'Hala', fallback: null });
+    expect(planSpeech('ഉണ്ട്', 'ml')).toEqual({
+      language: 'ml',
+      voiceId: null,
+      fallback: 'no_voice',
+    });
+  });
+
+  it('sends a long reply as text: a voice note is for a short answer', () => {
+    expect(planSpeech('a'.repeat(1_000), 'en').voiceId).toBe('Kajal');
+    expect(planSpeech('a'.repeat(1_001), 'en')).toMatchObject({
+      voiceId: null,
+      fallback: 'too_long',
+    });
+  });
+
+  it('the assistant speaks only when the business allows it and the customer just spoke', () => {
+    expect(assistantSpeaks(true, true)).toBe(true);
+    expect(assistantSpeaks(true, false)).toBe(false);
+    expect(assistantSpeaks(false, true)).toBe(false);
   });
 });

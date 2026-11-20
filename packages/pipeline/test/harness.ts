@@ -12,7 +12,8 @@ import { createSimulator, seededRandom, type FaultSettings, type Simulator } fro
 import { SIGNATURE_HEADER, verifySignature } from '@app/whatsapp';
 import { Redis } from 'ioredis';
 import { MockChatModel, MockEmbedder, type ChatModel } from '@app/assistant';
-import { ProviderRegistry } from '../src/config.js';
+import { MockSpeechToText, MockTextToSpeech } from '@app/voice';
+import { ProviderRegistry, type VoiceDeps } from '../src/config.js';
 import { RedisEventPublisher } from '../src/events.js';
 import type { PipelineDeps } from '../src/deps.js';
 import { ingestWebhook } from '../src/ingest.js';
@@ -102,6 +103,8 @@ export interface HarnessOptions {
   assistant?: { model?: ChatModel; debounceMs?: number };
   /** The sweeper is fleet-wide; tests that count model calls turn the timer off and sweep by hand. */
   sweepIntervalMs?: number;
+  /** Mock speech by default, as in mock mode. */
+  voice?: Partial<VoiceDeps>;
 }
 
 /**
@@ -213,6 +216,10 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
         debounceMs: options.assistant?.debounceMs ?? 0,
         maxOutputTokens: 1024,
       },
+    },
+    voice: {
+      stt: options.voice?.stt ?? new MockSpeechToText(),
+      tts: options.voice?.tts ?? new MockTextToSpeech(),
     },
     events: new RedisEventPublisher(
       publisher,

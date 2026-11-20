@@ -1,6 +1,6 @@
 import type { Database } from '@app/db';
 import type { Logger } from '@app/shared';
-import type { AssistantDeps, PipelineSettings, ProviderRegistry } from './config.js';
+import type { AssistantDeps, PipelineSettings, ProviderRegistry, VoiceDeps } from './config.js';
 import type { EventPublisher } from './events.js';
 import type { Queues } from './queues.js';
 import type { ObjectStorage } from './storage.js';
@@ -17,6 +17,7 @@ export interface PipelineDeps {
   /** Tells connected inboxes a conversation changed. */
   events: EventPublisher;
   assistant: AssistantDeps;
+  voice: VoiceDeps;
   now?: () => Date;
 }
 

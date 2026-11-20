@@ -1,6 +1,7 @@
 import { createDb } from '@app/db';
 import {
   assistantDeps,
+  voiceDeps,
   createQueues,
   LocalDiskStorage,
   pipelineEnvSchema,
@@ -54,6 +55,7 @@ const workers = startWorkers(
     settings,
     events: new RedisEventPublisher(publisher, logger),
     assistant: assistantDeps(config),
+    voice: voiceDeps(config),
   },
   { connection, prefix: config.QUEUE_PREFIX },
 );

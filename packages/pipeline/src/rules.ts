@@ -1,8 +1,10 @@
 /**
  * Pure rules of the pipeline, kept free of I/O so they can be unit-tested
  * exhaustively: status ordering, the 24-hour window, send ordering and the
- * conversation state machine.
+ * conversation state machine and when a reply can be spoken.
  */
+
+import { POLLY_VOICES, VOICE_REPLY_MAX_CHARS, type SpokenLanguage } from '@app/voice';
 
 export type MessageStatus =
   | 'received'
@@ -142,4 +144,33 @@ export function maySend(
 ): boolean {
   if (sender.type === 'assistant') return state === 'assistant';
   return state === 'human' && holderUserId === sender.userId;
+}
+
+// ---------------------------------------------------------------------------
+// Voice replies
+
+export interface SpeechPlan {
+  language: SpokenLanguage;
+  /** The Polly voice to speak with; null means the reply goes as text. */
+  voiceId: string | null;
+  fallback: 'no_voice' | 'too_long' | null;
+}
+
+/**
+ * Whether a reply meant to be spoken can be: Polly needs a voice for the
+ * language (none for Malayalam), and a voice note is for a short answer.
+ * The size check comes later, once the audio exists.
+ */
+export function planSpeech(text: string, language: SpokenLanguage): SpeechPlan {
+  const voice = POLLY_VOICES[language];
+  if (!voice) return { language, voiceId: null, fallback: 'no_voice' };
+  if (text.length > VOICE_REPLY_MAX_CHARS) {
+    return { language, voiceId: null, fallback: 'too_long' };
+  }
+  return { language, voiceId: voice.voiceId, fallback: null };
+}
+
+/** The assistant speaks when the business allows it and the customer just spoke. */
+export function assistantSpeaks(voiceReplies: boolean, lastMessageWasVoice: boolean): boolean {
+  return voiceReplies && lastMessageWasVoice;
 }

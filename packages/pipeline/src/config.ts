@@ -7,6 +7,14 @@ import {
   type Embedder,
 } from '@app/assistant';
 import { appModeSchema, type AppMode } from '@app/shared';
+import {
+  MockSpeechToText,
+  MockTextToSpeech,
+  UnconfiguredSpeechToText,
+  UnconfiguredTextToSpeech,
+  type SpeechToText,
+  type TextToSpeech,
+} from '@app/voice';
 import { GraphClient } from '@app/whatsapp';
 import { z } from 'zod';
 
@@ -159,6 +167,23 @@ export interface AssistantDeps {
  * Live mode: the Bedrock adapters arrive in phase 7; until then every turn
  * hands over to a person, so a real customer is never answered by the mock.
  */
+/** Speech in and out, chosen by APP_MODE. */
+export interface VoiceDeps {
+  stt: SpeechToText;
+  tts: TextToSpeech;
+}
+
+/**
+ * Mock mode: the transcript the simulator attached, and the bundled clip.
+ * Live mode: Transcribe and Polly arrive in phase 7; until then voice notes
+ * go to a person and replies go as text.
+ */
+export function voiceDeps(env: PipelineEnv): VoiceDeps {
+  return env.APP_MODE === 'mock'
+    ? { stt: new MockSpeechToText(), tts: new MockTextToSpeech() }
+    : { stt: new UnconfiguredSpeechToText(), tts: new UnconfiguredTextToSpeech() };
+}
+
 export function assistantDeps(env: PipelineEnv): AssistantDeps {
   const settings = {
     enabled: env.ASSISTANT_ENABLED,

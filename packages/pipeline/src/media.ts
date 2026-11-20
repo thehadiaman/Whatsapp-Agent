@@ -2,7 +2,7 @@ import { schema, withTenant } from '@app/db';
 import type { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import type { PipelineDeps } from './deps.js';
-import { tenantMessageJobSchema } from './queues.js';
+import { enqueueTranscription, tenantMessageJobSchema } from './queues.js';
 import { mediaKey } from './storage.js';
 
 /**
@@ -16,6 +16,7 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
   const target = await withTenant(deps.db, tenantId, async (tx) => {
     const [message] = await tx
       .select({
+        kind: schema.messages.kind,
         media: schema.messages.media,
         channelId: schema.messages.channelId,
         conversationId: schema.messages.conversationId,
@@ -28,7 +29,12 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
       .from(schema.channels)
       .where(eq(schema.channels.id, message.channelId));
     return channel
-      ? { media: message.media, provider: channel.provider, conversationId: message.conversationId }
+      ? {
+          kind: message.kind,
+          media: message.media,
+          provider: channel.provider,
+          conversationId: message.conversationId,
+        }
       : null;
   });
   if (!target) return;
@@ -46,5 +52,6 @@ export async function fetchInboundMedia(deps: PipelineDeps, job: Job): Promise<v
       .where(eq(schema.messages.id, messageId)),
   );
   deps.logger.info({ messageId, sizeBytes: file.bytes.byteLength }, 'inbound media stored');
+  if (target.kind === 'audio') await enqueueTranscription(deps.queues, { tenantId, messageId });
   await deps.events.conversationChanged(tenantId, target.conversationId);
 }

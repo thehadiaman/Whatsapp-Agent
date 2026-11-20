@@ -11,11 +11,15 @@ import { sendOutbound } from './outbound.js';
 import {
   enqueueAssistant,
   enqueueKnowledge,
+  enqueueMedia,
   enqueueOutbound,
+  enqueueTranscription,
   enqueueWebhookEvent,
   QUEUES,
+  tenantMessageJobSchema,
   webhookJobSchema,
 } from './queues.js';
+import { failTranscript, transcribeVoiceNote } from './voice.js';
 
 export interface RunningWorkers {
   close(): Promise<void>;
@@ -35,7 +39,7 @@ export interface WorkerOptions {
 
 /**
  * Starts the pipeline workers (webhooks, outbound, media, assistant,
- * knowledge) and the sweeper. Used by apps/worker and
+ * knowledge, transcription) and the sweeper. Used by apps/worker and
  * by integration tests, so tests run exactly the production wiring.
  */
 export function startWorkers(deps: PipelineDeps, options: WorkerOptions): RunningWorkers {
@@ -75,6 +79,27 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
     prefix,
     concurrency: 1,
   });
+  // Transcription is network-bound (Transcribe polls); a couple at a time.
+  const transcription = new Worker(
+    QUEUES.transcription,
+    (job: Job) => transcribeVoiceNote(deps, job),
+    { connection, prefix, concurrency: 2 },
+  );
+  // A voice note whose file could not be copied can never be transcribed:
+  // settle it so the assistant hands the conversation to a person.
+  media.on('failed', (job) => {
+    if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
+    const parsed = tenantMessageJobSchema.safeParse(job.data);
+    if (!parsed.success) return;
+    void failTranscript(
+      deps,
+      parsed.data.tenantId,
+      parsed.data.messageId,
+      'the voice note could not be downloaded from WhatsApp',
+    ).catch((err: unknown) => {
+      log.error({ err }, 'could not mark transcript failed');
+    });
+  });
   knowledge.on('failed', (job) => {
     if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
     void failKnowledgeJob(deps, job).catch((err: unknown) => {
@@ -82,14 +107,14 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
     });
   });
 
-  for (const worker of [webhooks, outbound, media, assistant, knowledge]) {
+  for (const worker of [webhooks, outbound, media, assistant, knowledge, transcription]) {
     // Without an error listener a worker can stop processing (BullMQ docs).
     worker.on('error', (error) => {
       log.error({ err: error, queue: worker.name }, 'worker error');
     });
   }
   // Outbound and the assistant record their own outcome; these do it when retries run out.
-  for (const worker of [webhooks, media, knowledge]) {
+  for (const worker of [webhooks, media, knowledge, transcription]) {
     worker.on('failed', (job, error) => {
       if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
       void recordDeadLetter(deps.db, {
@@ -143,6 +168,19 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
       });
     }
 
+    // Voice notes stuck waiting for a transcript: redo the copy or the transcription.
+    const voiceNotes = await deps.db.execute<{
+      tenant_id: string;
+      message_id: string;
+      stored: boolean;
+    }>(
+      sql`select tenant_id, message_id, stored from pending_transcripts(make_interval(secs => ${sweepAfter}), make_interval(hours => 1), 100)`,
+    );
+    for (const row of voiceNotes.rows) {
+      const job = { tenantId: row.tenant_id, messageId: row.message_id };
+      await (row.stored ? enqueueTranscription(deps.queues, job) : enqueueMedia(deps.queues, job));
+    }
+
     // Customer messages the assistant never answered (job lost after commit).
     // Only the last hour: an older silence is for a person to pick up.
     const unanswered = await deps.db.execute<{
@@ -177,6 +215,7 @@ export function startWorkers(deps: PipelineDeps, options: WorkerOptions): Runnin
         media.close(),
         assistant.close(),
         knowledge.close(),
+        transcription.close(),
       ]);
     },
   };

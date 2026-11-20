@@ -292,6 +292,8 @@ async function storeInbound(
               ...(content.kind === 'audio' ? { voice: content.voice } : {}),
             }
           : null,
+      // A voice note waits for its transcript before the assistant answers.
+      transcript: content.kind === 'audio' ? { status: 'pending' } : null,
       status: 'received',
       statusAt: sentAt,
       waTimestamp: sentAt,
