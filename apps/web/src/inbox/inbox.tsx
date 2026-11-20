@@ -229,7 +229,8 @@ export function Inbox({ me, initialSelectedId }: Props) {
         void run(() => inboxApi.close(id())).then(() => {
           setConfirmingClose(false);
         }),
-      reply: (text: string) => run(() => inboxApi.reply(id(), { text })),
+      reply: (text: string, voice: boolean) =>
+        run(() => inboxApi.reply(id(), voice ? { text, voice: true } : { text })),
       sendTemplate: () => void run(() => inboxApi.reply(id(), { template: 'reopen' })),
       note: (text: string) =>
         run(() => inboxApi.note(id(), text)).then((ok) => {

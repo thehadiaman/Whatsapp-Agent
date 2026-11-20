@@ -24,7 +24,7 @@ export interface ThreadActions {
   handBack: () => void;
   assign: (userId: string) => void;
   close: () => void;
-  reply: (text: string) => Promise<boolean>;
+  reply: (text: string, voice: boolean) => Promise<boolean>;
   sendTemplate: () => void;
   note: (text: string) => Promise<boolean>;
   retry: (messageId: string) => void;
@@ -84,9 +84,93 @@ function transitionText(entry: Extract<TimelineEntry, { type: 'transition' }>): 
   }
 }
 
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English',
+  hi: 'Hindi',
+  ml: 'Malayalam',
+  ar: 'Arabic',
+};
+
+const FALLBACK_TEXT: Record<string, (language: string) => string> = {
+  no_voice: (language) => `no voice for ${LANGUAGE_NAMES[language] ?? language}`,
+  too_long: () => 'too long for a voice note',
+  too_large: () => 'the voice note would be too large to play',
+  synthesis_failed: () => 'the voice could not be made',
+};
+
+function duration(ms: number | null): string {
+  if (ms === null) return '';
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return ` · ${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/** A voice note: the player, with what was said beside it (DESIGN.md, "Voice notes"). */
+function VoiceNote({ message }: { message: TimelineMessage }) {
+  const src = `/api/media/${message.id}`;
+  const available = message.media?.available ?? false;
+  const t = message.transcript;
+  const outbound = message.direction === 'outbound';
+  return (
+    <div className="grid gap-x-3 gap-y-1 md:grid-cols-[minmax(0,15rem)_1fr]">
+      {available ? (
+        <audio
+          controls
+          preload="none"
+          src={src}
+          className="h-9 w-full max-w-60"
+          aria-label={outbound ? 'Voice reply' : 'Voice note from the customer'}
+        />
+      ) : (
+        <p className="mono text-meta text-graphite">
+          {outbound ? 'Voice note is being made…' : 'Voice note is being copied…'}
+        </p>
+      )}
+      <div className="min-w-0">
+        {outbound ? (
+          <>
+            <p dir="auto" className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {message.body}
+            </p>
+            <p className="mono text-meta text-graphite">
+              {message.speech?.language ?? ''} · Sent as voice
+              {message.speech?.engine === 'polly'
+                ? ` · Amazon Polly, ${message.speech.voiceId ?? ''}`
+                : message.speech?.engine === 'mock'
+                  ? ' · mock voice'
+                  : ''}
+              {duration(message.speech?.durationMs ?? null)}
+            </p>
+          </>
+        ) : t?.status === 'done' ? (
+          <>
+            <p dir="auto" className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {t.text}
+            </p>
+            <p className="mono text-meta text-graphite">
+              {t.language} ·{' '}
+              {t.engine === 'transcribe'
+                ? 'Transcribed by Amazon Transcribe'
+                : 'Transcript from simulator'}
+            </p>
+          </>
+        ) : t?.status === 'failed' ? (
+          <p className="text-list text-stamp">
+            Couldn&apos;t transcribe this voice note ({t.reason}). Listen to it before replying.
+          </p>
+        ) : (
+          <p className="mono text-meta text-graphite">Transcribing…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MessageBody({ message }: { message: TimelineMessage }) {
   const [expanded, setExpanded] = useState(false);
   const long = (message.body?.length ?? 0) > 700;
+  if (message.kind === 'audio' && (message.direction === 'inbound' || message.speech)) {
+    return <VoiceNote message={message} />;
+  }
   if (message.media) {
     const src = `/api/media/${message.id}`;
     return (
@@ -128,6 +212,11 @@ function MessageBody({ message }: { message: TimelineMessage }) {
       >
         {message.body}
       </p>
+      {message.speech?.fallback ? (
+        <p className="mono text-meta text-graphite">
+          Sent as text: {FALLBACK_TEXT[message.speech.fallback]?.(message.speech.language)}
+        </p>
+      ) : null}
       {long ? (
         <button
           type="button"
@@ -165,6 +254,8 @@ export function Thread({
   selectedMessageId,
 }: Props) {
   const [draft, setDraft] = useState('');
+  const [voiceReply, setVoiceReply] = useState(false);
+  const speaking = voiceReply && detail.voiceReplies && !noteMode;
   const mine = detail.state === 'human' && detail.holder?.id === meId;
   const window = windowText(detail.windowClosesAt, now);
   const custody = custodyAlongTimeline(detail.timeline);
@@ -183,7 +274,7 @@ export function Thread({
   async function submit() {
     const text = draft.trim();
     if (!text) return;
-    const sent = noteMode ? await actions.note(text) : await actions.reply(text);
+    const sent = noteMode ? await actions.note(text) : await actions.reply(text, speaking);
     if (sent) setDraft('');
   }
 
@@ -487,8 +578,21 @@ export function Thread({
                 className={`button ${noteMode ? 'button-quiet bg-carbon' : 'button-person'}`}
                 disabled={busy || !draft.trim()}
               >
-                {noteMode ? 'Add note' : 'Send'}
+                {noteMode ? 'Add note' : speaking ? 'Send as voice' : 'Send'}
               </button>
+              {detail.voiceReplies && !noteMode ? (
+                <button
+                  type="button"
+                  className="mono text-meta font-semibold underline underline-offset-2"
+                  aria-pressed={voiceReply}
+                  title="Speak the reply as a voice note. Languages without a voice go as text."
+                  onClick={() => {
+                    setVoiceReply(!voiceReply);
+                  }}
+                >
+                  Voice reply: {voiceReply ? 'on' : 'off'}
+                </button>
+              ) : null}
               {mine ? (
                 <button
                   type="button"
