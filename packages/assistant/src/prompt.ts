@@ -5,7 +5,20 @@ export interface BusinessProfile {
   /** What the business sells and where, in the owner's words; defines "on topic". */
   summary: string;
   timezone: string;
+  /** How replies sound (tenant setting). */
+  tone?: AssistantTone;
+  /** Opening hours as text, e.g. "Mon–Sat 10:00–22:00 · Sun closed"; given as a fact. */
+  hours?: string | null;
 }
+
+export type AssistantTone = 'warm' | 'brief' | 'formal';
+
+const TONE_RULE: Record<AssistantTone, string> = {
+  warm: 'Write warmly and simply, like a helpful person at the shop counter.',
+  brief: 'Be brief: one short sentence where you can, with no greeting or sign-off.',
+  formal:
+    'Write politely and formally, as to a valued customer; use respectful forms of address (aap in Hindi, حضرتك in Arabic).',
+};
 
 export interface RetrievedPassage {
   id: string;
@@ -97,6 +110,13 @@ export function systemPrompt(business: BusinessProfile): string {
     '4. When the customer gives an order number, call lookup_order. When the customer asks for a person, is unhappy, or needs something only a person can do, call handoff.',
     "5. Reply in the customer's language and script: Hindi in Latin letters gets Hindi in Latin letters, Malayalam gets Malayalam, Arabic gets Arabic. Plain text only, no markdown, at most three short sentences.",
     '6. Finish with your answer as JSON: {"reply": "...", "basis": "..."}, where basis is "knowledge" if the reply uses passages, "order" if it uses an order lookup, "declined" if you declined an off-topic request, and "none" otherwise.',
+    `7. ${TONE_RULE[business.tone ?? 'warm']}`,
+    ...(business.hours
+      ? [
+          '',
+          `Opening hours (${escapeData(business.timezone)}, set by the business, a fact you may give): ${escapeData(business.hours)}`,
+        ]
+      : []),
   ].join('\n');
 }
 

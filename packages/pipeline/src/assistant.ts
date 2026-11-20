@@ -6,6 +6,8 @@ import {
   HANDOFF_REASON_TEXT,
   HANDOFF_REASONS,
   handoffNotice,
+  NOTICE_LOCALES,
+  outsideHoursLine,
   ModelUnavailableError,
   ungroundedFigures,
   type BusinessProfile,
@@ -18,16 +20,17 @@ import {
   type ToolCall,
 } from '@app/assistant';
 import { schema, withTenant, type Transaction } from '@app/db';
+import { describeHours, nextOpening, type OpeningHours } from '@app/shared';
 import { spokenLanguageOf } from '@app/voice';
 import type { Job } from 'bullmq';
-import { and, count, desc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, lt, max, notInArray, sql } from 'drizzle-orm';
 import { z, ZodError } from 'zod';
 import { transitionConversation } from './conversations.js';
 import { nowOf, type PipelineDeps } from './deps.js';
 import { retrievePassages } from './knowledge.js';
 import { OwnershipError, queueReply } from './outbound.js';
 import { assistantJobSchema, enqueueOutbound, type AssistantJob } from './queues.js';
-import { assistantSpeaks } from './rules.js';
+import { assistantSpeaks, escalationKeywordIn } from './rules.js';
 
 type Outcome = (typeof schema.assistantOutcome.enumValues)[number];
 
@@ -44,6 +47,11 @@ interface Context {
   customerId: string;
   /** Answer a voice note with a voice note (tenant setting). */
   voiceReplies: boolean;
+  /** Escalation rules (tenant settings). */
+  escalationKeywords: string[];
+  maxAssistantReplies: number | null;
+  openingHours: OpeningHours | null;
+  outsideHoursNotice: boolean;
   /** Customer messages since the business last wrote, oldest first. */
   pending: PendingMessage[];
   history: HistoryMessage[];
@@ -152,11 +160,21 @@ async function loadContext(tx: Transaction, job: AssistantJob): Promise<Context 
     .where(eq(schema.tenants.id, job.tenantId));
   if (!tenant) return null;
   return {
-    business: { name: tenant.name, summary: tenant.assistantSummary, timezone: tenant.timezone },
+    business: {
+      name: tenant.name,
+      summary: tenant.assistantSummary,
+      timezone: tenant.timezone,
+      tone: tenant.assistantTone,
+      hours: tenant.openingHours ? describeHours(tenant.openingHours) : null,
+    },
     budget: tenant.assistantDailyTokenBudget,
     turnsPerHour: tenant.assistantTurnsPerCustomerHour,
     customerId: conversation.customerId,
     voiceReplies: tenant.voiceReplies,
+    escalationKeywords: tenant.escalationKeywords,
+    maxAssistantReplies: tenant.maxAssistantReplies,
+    openingHours: tenant.openingHours,
+    outsideHoursNotice: tenant.outsideHoursNotice,
     pending: pendingRows.map((row): PendingMessage => {
       const transcript = row.kind === 'audio' ? row.transcript : null;
       return {
@@ -280,6 +298,8 @@ interface TurnRecord {
   passages: RetrievedPassage[];
   toolCalls: { name: string; input: unknown; result: unknown }[];
   detail: string | null;
+  /** Code for analytics when the conversation goes to a person (see HANDOFF_CODES). */
+  handoffReason: string | null;
 }
 
 /**
@@ -314,6 +334,7 @@ export async function runAssistantTurn(
     passages: [],
     toolCalls: [],
     detail: null,
+    handoffReason: null,
   };
 
   const limits = await withTenant(deps.db, job.tenantId, async (tx) => {
@@ -330,16 +351,39 @@ export async function runAssistantTurn(
       .select()
       .from(schema.assistantUsageDaily)
       .where(eq(schema.assistantUsageDaily.day, localDay(now, context.business.timezone)));
+    // Replies since the assistant last took the conversation (it started, or was handed back).
+    const [since] = await tx
+      .select({ at: max(schema.conversationTransitions.createdAt) })
+      .from(schema.conversationTransitions)
+      .where(
+        and(
+          eq(schema.conversationTransitions.conversationId, job.conversationId),
+          eq(schema.conversationTransitions.toState, 'assistant'),
+        ),
+      );
+    const [replies] = await tx
+      .select({ n: count() })
+      .from(schema.assistantTurns)
+      .where(
+        and(
+          eq(schema.assistantTurns.conversationId, job.conversationId),
+          inArray(schema.assistantTurns.outcome, ['replied', 'declined']),
+          since?.at ? gt(schema.assistantTurns.createdAt, since.at) : undefined,
+        ),
+      );
     return {
       turnsThisHour: recent?.n ?? 0,
       tokensToday: usage ? usage.inputTokens + usage.outputTokens : 0,
+      repliesSoFar: replies?.n ?? 0,
     };
   });
+  const keyword = escalationKeywordIn(customerText, context.escalationKeywords);
 
   if (limits.turnsThisHour >= context.turnsPerHour) {
     // Likely spam or a loop: stop answering, no message back, and let a person look.
     Object.assign(record, {
       outcome: 'rate_limited',
+      handoffReason: 'rate_limited',
       handoff: 'Many messages in an hour; the assistant stopped replying',
       detail: `${String(limits.turnsThisHour)} turns in the last hour`,
     });
@@ -348,18 +392,56 @@ export async function runAssistantTurn(
     Object.assign(record, {
       outcome: 'handed_off',
       reply: notice.text,
+      handoffReason: 'voice_untranscribed',
       handoff: 'Voice note could not be transcribed',
       detail: 'a voice note in this turn has no transcript',
+    });
+  } else if (keyword) {
+    // The owner's rule: these topics always go to a person, before any model call.
+    Object.assign(record, {
+      outcome: 'handed_off',
+      reply: notice.text,
+      handoffReason: 'escalation_keyword',
+      handoff: `Mentioned "${keyword}" (escalation rule)`,
+      detail: `escalation keyword: ${keyword}`,
+    });
+  } else if (
+    context.maxAssistantReplies !== null &&
+    limits.repliesSoFar >= context.maxAssistantReplies
+  ) {
+    Object.assign(record, {
+      outcome: 'handed_off',
+      reply: notice.text,
+      handoffReason: 'reply_limit',
+      handoff: `Assistant reached ${String(context.maxAssistantReplies)} replies (escalation rule)`,
+      detail: `${String(limits.repliesSoFar)} replies in this conversation`,
     });
   } else if (limits.tokensToday >= context.budget) {
     Object.assign(record, {
       outcome: 'budget_exhausted',
+      handoffReason: 'budget_exhausted',
       reply: notice.text,
       handoff: "Assistant's daily budget is used up",
       detail: `${String(limits.tokensToday)} of ${String(context.budget)} tokens used today`,
     });
   } else {
     await answer(deps, job, context, record, now, notice.text, options.lastAttempt);
+  }
+
+  // Handing over after hours: say when a person will actually read it.
+  const opens =
+    record.handoff && record.reply && context.outsideHoursNotice
+      ? nextOpening(context.openingHours, context.business.timezone, now)
+      : null;
+  if (opens && record.reply) {
+    const when = new Intl.DateTimeFormat(NOTICE_LOCALES[notice.language], {
+      timeZone: context.business.timezone,
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(opens);
+    record.reply = `${record.reply}\n${outsideHoursLine(notice.language, when)}`;
   }
 
   return commit(deps, job, context, record, now, Math.round(performance.now() - started));
@@ -376,7 +458,14 @@ async function answer(
 ): Promise<void> {
   const model = deps.assistant.model;
   const fail = (outcome: Outcome, handoff: string, detail: string) => {
-    Object.assign(record, { outcome, reply: noticeText, handoff, detail, basis: null });
+    Object.assign(record, {
+      outcome,
+      reply: noticeText,
+      handoff,
+      detail,
+      basis: null,
+      handoffReason: outcome,
+    });
   };
   try {
     const query = context.pending.map((p) => p.words).join('\n');
@@ -440,6 +529,7 @@ async function answer(
       ...record.toolCalls.map((c) => JSON.stringify(c.result)),
       ...context.pending.map((p) => p.text),
       ...context.history.map((h) => h.text),
+      context.business.hours ?? '',
     ];
     const invented = ungroundedFigures(final.reply, evidence);
     record.basis = final.basis;
@@ -458,6 +548,7 @@ async function answer(
       handoff: chosen
         ? `${HANDOFF_REASON_TEXT[chosen.reason]}${chosen.summary ? `: ${chosen.summary}` : ''}`
         : null,
+      handoffReason: chosen ? chosen.reason : null,
     });
   } catch (error) {
     const permanent =
@@ -544,6 +635,8 @@ async function commit(
         })),
         toolCalls: record.toolCalls,
         detail: record.detail,
+        // A person took over first (skipped): nothing was handed over.
+        handoffReason: record.handoff ? record.handoffReason : null,
       })
       .returning({ id: schema.assistantTurns.id });
 

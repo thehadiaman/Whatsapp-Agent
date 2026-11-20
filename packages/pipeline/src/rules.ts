@@ -174,3 +174,24 @@ export function planSpeech(text: string, language: SpokenLanguage): SpeechPlan {
 export function assistantSpeaks(voiceReplies: boolean, lastMessageWasVoice: boolean): boolean {
   return voiceReplies && lastMessageWasVoice;
 }
+
+// ---------------------------------------------------------------------------
+// Escalation rules
+
+/**
+ * The first escalation keyword the text mentions, or null. Case-insensitive
+ * and a whole word or phrase in any script, so "refund" matches "Refund
+ * please" but not "refunded", and "पैसे वापस" matches inside a Hindi sentence.
+ */
+export function escalationKeywordIn(text: string, keywords: readonly string[]): string | null {
+  const haystack = text.normalize('NFKC').toLocaleLowerCase();
+  for (const keyword of keywords) {
+    const needle = keyword.normalize('NFKC').toLocaleLowerCase().trim();
+    if (!needle) continue;
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    // Letters, marks and digits of any script count as part of a word.
+    const pattern = new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'u');
+    if (pattern.test(haystack)) return keyword.trim();
+  }
+  return null;
+}

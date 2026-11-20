@@ -3,6 +3,7 @@ import {
   assistantSpeaks,
   canTransition,
   decideSend,
+  escalationKeywordIn,
   assistantMessageMayGo,
   maySend,
   nextStatus,
@@ -166,5 +167,23 @@ describe('voice replies', () => {
     expect(assistantSpeaks(true, true)).toBe(true);
     expect(assistantSpeaks(true, false)).toBe(false);
     expect(assistantSpeaks(false, true)).toBe(false);
+  });
+});
+
+describe('escalation keywords', () => {
+  const keywords = ['refund', 'complaint', 'पैसे वापस', 'استرداد', 'പരാതി'];
+
+  it('matches whole words and phrases in any script, ignoring case', () => {
+    expect(escalationKeywordIn('I want a REFUND now', keywords)).toBe('refund');
+    expect(escalationKeywordIn('mujhe पैसे वापस chahiye', keywords)).toBe('पैसे वापस');
+    expect(escalationKeywordIn('أريد استرداد المبلغ', keywords)).toBe('استرداد');
+    expect(escalationKeywordIn('എനിക്ക് ഒരു പരാതി ഉണ്ട്', keywords)).toBe('പരാതി');
+  });
+
+  it('does not match inside other words, and ignores empty keywords', () => {
+    expect(escalationKeywordIn('was it refunded?', keywords)).toBeNull();
+    expect(escalationKeywordIn('no complaints here', keywords)).toBeNull();
+    expect(escalationKeywordIn('anything', ['  ', ''])).toBeNull();
+    expect(escalationKeywordIn('a (b) c', ['(b)'])).toBe('(b)');
   });
 });
