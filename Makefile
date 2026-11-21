@@ -12,7 +12,7 @@ export
 # from the repository root once, here.
 MEDIA_STORAGE_DIR := $(abspath $(or $(MEDIA_STORAGE_DIR),.data/media))
 
-.PHONY: help setup infra db dev check test test-int e2e eval eval-mock load-test infra-check backup-test rehearsal images up down reset
+.PHONY: help setup infra db dev check test test-int e2e eval eval-mock load-test infra-check backup-test rehearsal readme-screenshots images up down reset
 
 help: ## List targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -61,6 +61,9 @@ backup-test: infra ## Back up and restore the app_test database (run make test-i
 
 rehearsal: ## The production stack locally: images, Caddy, TLS, WebSocket, backups and a full restore (offline)
 	scripts/prod-rehearsal.sh
+
+readme-screenshots: infra ## Regenerate docs/images from a fresh seed and check the README demo (stop make dev first)
+	scripts/readme-screenshots.sh
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build
