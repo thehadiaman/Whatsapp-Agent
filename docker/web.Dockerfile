@@ -9,6 +9,10 @@ FROM ${NODE_IMAGE} AS build
 # in production Caddy routes /api directly and this proxy is not used.
 ARG API_INTERNAL_URL=http://api:4000
 ENV API_INTERNAL_URL=${API_INTERNAL_URL}
+# Where photos and voice notes are played from (the S3 bucket's origin), for
+# the content security policy. Empty in mock mode: media comes from the API.
+ARG MEDIA_ORIGIN=
+ENV MEDIA_ORIGIN=${MEDIA_ORIGIN}
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
