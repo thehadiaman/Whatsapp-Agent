@@ -12,10 +12,10 @@ export
 # from the repository root once, here.
 MEDIA_STORAGE_DIR := $(abspath $(or $(MEDIA_STORAGE_DIR),.data/media))
 
-.PHONY: help setup infra db dev check test test-int e2e eval eval-mock load-test images up down reset
+.PHONY: help setup infra db dev check test test-int e2e eval eval-mock load-test infra-check backup-test rehearsal images up down reset
 
 help: ## List targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
 setup: ## Install dependencies, enable git hooks, create .env, pull images (needs internet once)
 	@[ -f .env ] || { cp .env.example .env; echo "created .env from .env.example"; }
@@ -52,6 +52,15 @@ eval-mock: infra ## The same evals offline, with the mock model: checks the mach
 
 load-test: ## 1,000 messages with faults into a running stack (start make dev first; docs/LOAD-TEST.md)
 	pnpm load-test
+
+infra-check: ## Terraform fmt/validate/test (mocked AWS) and shellcheck on the deploy scripts; no AWS account
+	scripts/infra-check.sh
+
+backup-test: infra ## Back up and restore the app_test database (run make test-int first)
+	scripts/backup-restore.test.sh
+
+rehearsal: ## The production stack locally: images, Caddy, TLS, WebSocket, backups and a full restore (offline)
+	scripts/prod-rehearsal.sh
 
 images: ## Build all production images for this machine's architecture
 	docker compose --profile app build
