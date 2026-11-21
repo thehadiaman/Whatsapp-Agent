@@ -1,0 +1,15 @@
+#!/bin/bash
+# Load the demo businesses and the platform admin into production, once.
+# Needs SEED_PASSWORD under the SSM path (infra/scripts/put-secrets.sh --seed).
+# Idempotent, like `make db`: safe to run again.
+#   sudo /opt/support-desk/current/deploy/bin/seed
+set -euo pipefail
+
+# shellcheck source=deploy/bin/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck disable=SC1091
+. /etc/support-desk/host.env
+
+grep -q '^SEED_PASSWORD=.\{12,\}' "$APP_ENV" ||
+  die "SEED_PASSWORD (12+ characters) is not in $APP_ENV: put it in SSM, then redeploy"
+dc run --rm seed

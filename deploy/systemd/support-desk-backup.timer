@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly database backup
+
+[Timer]
+# 02:00 in India (20:30 UTC), the quietest hour for both demo businesses.
+OnCalendar=*-*-* 20:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

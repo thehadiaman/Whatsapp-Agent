@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly restore drill: a backup is only as good as its last restore
+
+[Timer]
+# Sundays, an hour after the nightly backup.
+OnCalendar=Sun *-*-* 21:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

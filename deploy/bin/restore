@@ -1,0 +1,130 @@
+#!/bin/bash
+# Restore a backup made by deploy/bin/backup.
+#
+#   restore [--into DB] [--check] [--drop-after] SOURCE
+#       Restore into a scratch database (default app_restore_check), never the
+#       live one. --check compares its tables, row-level security and policies
+#       with the live database; --drop-after removes it again. This is the
+#       weekly drill (support-desk-restore-drill.timer).
+#
+#   restore --replace-production SOURCE
+#       Disaster recovery: stops the app, keeps the current database under a
+#       new name (app_before_restore_<time>), restores into "app", reruns
+#       provision and starts the app. Asks for confirmation unless CONFIRM=yes.
+#
+# SOURCE is "latest" (newest in the ops bucket), an s3:// URI or a local file.
+# Same overrides as deploy/bin/backup (PG_EXEC, BACKUP_LOCAL_DIR, BACKUP_S3_PREFIX),
+# plus CHECK_AGAINST, the database --check compares with (app).
+set -euo pipefail
+
+# shellcheck source=deploy/bin/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck disable=SC1091
+[ -f /etc/support-desk/host.env ] && . /etc/support-desk/host.env
+
+LOCAL_DIR=${BACKUP_LOCAL_DIR:-/data/backups}
+S3_PREFIX=${BACKUP_S3_PREFIX-s3://${OPS_BUCKET:-}/backups}
+CHECK_AGAINST=${CHECK_AGAINST:-app}
+
+into=app_restore_check check=false drop_after=false replace=false source=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --into) into=${2:?--into needs a database name}; shift 2 ;;
+    --check) check=true; shift ;;
+    --drop-after) drop_after=true; shift ;;
+    --replace-production) replace=true; shift ;;
+    -*) die "unknown option $1" ;;
+    *) source=$1; shift ;;
+  esac
+done
+[ -n "$source" ] || die "usage: restore [--into DB] [--check] [--drop-after] [--replace-production] latest|s3://...|FILE"
+[[ "$into" =~ ^[a-z_][a-z0-9_]*$ ]] || die "not a plain database name: $into"
+if ! $replace && [ "$into" = app ]; then
+  die "use --replace-production to restore over the live database"
+fi
+
+pg() {
+  if [ -n "${PG_EXEC:-}" ]; then
+    local -a exec_cmd
+    read -ra exec_cmd <<<"$PG_EXEC"
+    "${exec_cmd[@]}" "$@"
+  else
+    dc exec -T postgres "$@"
+  fi
+}
+sql() { pg psql -U postgres -d "$1" -v ON_ERROR_STOP=1 -qAt -c "$2"; }
+
+# --- Find the dump.
+mkdir -p "$LOCAL_DIR"
+case $source in
+  latest | s3://*)
+    [ -n "$S3_PREFIX" ] || die "no S3 prefix to restore from"
+    if [ "$source" = latest ]; then
+      key=$(aws s3 ls ${AWS_REGION:+--region "$AWS_REGION"} "$S3_PREFIX/" | awk '{print $4}' | grep '\.dump$' | sort | tail -n 1)
+      [ -n "$key" ] || die "no backups under $S3_PREFIX/"
+      source="$S3_PREFIX/$key"
+    fi
+    file="$LOCAL_DIR/restore-$(basename "$source")"
+    aws s3 cp --only-show-errors ${AWS_REGION:+--region "$AWS_REGION"} "$source" "$file"
+    trap 'rm -f "$file"' EXIT
+    ;;
+  *)
+    file=$source
+    [ -f "$file" ] || die "no such file: $file"
+    ;;
+esac
+log "restoring $(basename "$file")"
+
+restore_into() {
+  local db=$1
+  sql postgres "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE)"
+  sql postgres "CREATE DATABASE \"$db\""
+  # One transaction: a dump that fails halfway leaves nothing behind.
+  pg pg_restore -U postgres -d "$db" --exit-on-error --single-transaction <"$file"
+}
+
+if $replace; then
+  if [ "${CONFIRM:-}" != yes ]; then
+    read -r -p "Replace the live database with $(basename "$file")? Type yes: " answer
+    [ "$answer" = yes ] || die "not confirmed"
+  fi
+  keep="app_before_restore_$(date -u +%Y%m%d%H%M%S)"
+  log "stopping the app"
+  dc stop caddy web api worker
+  sql postgres "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'app' AND pid <> pg_backend_pid()" >/dev/null
+  sql postgres "ALTER DATABASE app RENAME TO $keep"
+  log "kept the old database as $keep (drop it once the restore is confirmed)"
+  restore_into app
+  dc run --rm provision
+  dc up --detach --wait
+  log "restored into app and restarted"
+  exit 0
+fi
+
+restore_into "$into"
+log "restored into $into"
+
+if $check; then
+  # Same tables, same row-level security switches, same policies: the
+  # restore is the schema the app runs on, isolation included.
+  shape="SELECT c.relname || ':' || c.relrowsecurity || ':' || c.relforcerowsecurity
+           || ':' || (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid)
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY 1"
+  restored=$(sql "$into" "$shape")
+  live=$(sql "$CHECK_AGAINST" "$shape")
+  [ -n "$restored" ] || die "the restored database has no tables"
+  if [ "$restored" != "$live" ]; then
+    diff <(printf '%s\n' "$live") <(printf '%s\n' "$restored") >&2 || true
+    die "restored tables or policies differ from $CHECK_AGAINST (a migration since the backup?)"
+  fi
+  tables=$(printf '%s\n' "$restored" | wc -l)
+  # Statistics are not restored with the data; count the rows themselves.
+  rows=$(sql "$into" "SELECT coalesce(sum((xpath('/row/n/text()', query_to_xml(format('SELECT count(*) AS n FROM %I.%I', schemaname, relname), false, true, '')))[1]::text::bigint), 0) FROM pg_stat_user_tables")
+  log "check passed: $tables tables match $CHECK_AGAINST, row-level security and policies included; $rows rows restored"
+fi
+
+if $drop_after; then
+  sql postgres "DROP DATABASE \"$into\" WITH (FORCE)"
+  log "dropped $into"
+fi

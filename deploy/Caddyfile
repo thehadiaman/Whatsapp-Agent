@@ -1,0 +1,30 @@
+# TLS (Let's Encrypt, automatic) and routing for the one public host.
+# /api/* (including the inbox socket and Meta's webhook) goes straight to the
+# API; everything else to the web app. Caddy proxies WebSocket upgrades on
+# its own, so the inbox socket uses WebSocket here, not long-polling (D-051).
+#
+# Client address: Caddy ignores X-Forwarded-* from clients by default (no
+# trusted proxies) and sets X-Real-IP from the connection itself, which the
+# API uses for sign-in and public rate limits. Containers are not reachable
+# from outside, so the header cannot be forged past Caddy.
+#
+# No access log: paths carry one-time invite tokens and the webhook
+# handshake's verify token. The apps log requests with those masked.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	handle /api/* {
+		reverse_proxy api:4000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

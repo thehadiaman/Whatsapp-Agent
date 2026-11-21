@@ -1,0 +1,188 @@
+# Production stack on the single EC2 instance (brief §5). Started by
+# deploy/bin/deploy, never by hand:
+#   docker compose -p support-desk -f compose.prod.yaml --env-file /etc/support-desk/app.env ...
+# The env file is rendered from SSM Parameter Store on every deploy; Compose
+# only interpolates from it, and each service gets just the variables it needs.
+# Images are the ones CI built and tested, tagged with the commit SHA.
+#
+# DATA_DIR and the host ports exist for the local rehearsal
+# (scripts/prod-rehearsal.sh); on the instance they keep their defaults.
+#
+# Memory on a 4 GB t4g.medium: postgres 1 GB, api and worker 640 MB each,
+# web 384 MB, redis 256 MB, caddy 128 MB; about 1 GB left for the OS.
+
+name: support-desk
+
+x-restart: &restart
+  restart: unless-stopped
+
+# The API and worker read the same pipeline settings (packages/pipeline config).
+x-pipeline-env: &pipeline-env
+  NODE_ENV: production
+  APP_MODE: ${APP_MODE:?}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://app_user:${DB_USER_PASSWORD:?}@postgres:5432/app
+  REDIS_URL: redis://redis:6379/0
+  AWS_REGION: ${AWS_REGION:?}
+  MEDIA_BUCKET: ${MEDIA_BUCKET:?}
+  MEDIA_URL_TTL_SECONDS: ${MEDIA_URL_TTL_SECONDS:-300}
+  BEDROCK_CHAT_MODEL: ${BEDROCK_CHAT_MODEL:?}
+  BEDROCK_EMBED_MODEL: ${BEDROCK_EMBED_MODEL:?}
+  CREDENTIALS_KEY: ${CREDENTIALS_KEY:?}
+  META_APP_SECRET: ${META_APP_SECRET:?}
+  META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:?}
+  ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-true}
+  # Used only in mock mode (the rehearsal); live mode stores media in S3.
+  MEDIA_STORAGE_DIR: /data/media
+
+x-node-health: &node-health
+  interval: 10s
+  timeout: 3s
+  retries: 12
+  start_period: 20s
+
+services:
+  postgres:
+    <<: *restart
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: app
+    command: ['postgres', '-c', 'shared_buffers=256MB', '-c', 'effective_cache_size=768MB']
+    volumes:
+      - ${DATA_DIR:-/data}/postgres:/var/lib/postgresql
+    shm_size: 256m
+    mem_limit: 1g
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d app']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    <<: *restart
+    image: redis:8.8.4-alpine
+    # BullMQ needs noeviction: an evicted job key is a lost message.
+    # Append-only file, so queued jobs survive a restart.
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--appendfsync',
+        'everysec',
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes:
+      - ${DATA_DIR:-/data}/redis:/data
+    mem_limit: 256m
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # One-shot, run by the deploy before the new code starts: database roles
+  # (passwords from SSM, so rotating one is a deploy) and migrations.
+  provision:
+    profiles: [ops]
+    image: ${ECR_REGISTRY:?}/support-desk/api:${IMAGE_TAG:?}
+    environment:
+      DATABASE_SUPERUSER_URL: postgres://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/app
+      DATABASE_MIGRATOR_URL: postgres://app_migrator:${DB_MIGRATOR_PASSWORD:?}@postgres:5432/app
+      DATABASE_URL: postgres://app_user:${DB_USER_PASSWORD:?}@postgres:5432/app
+      DATABASE_PLATFORM_URL: postgres://app_platform:${DB_PLATFORM_PASSWORD:?}@postgres:5432/app
+    command: ['node', 'node_modules/@app/db/dist/cli/provision.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # One-shot, by hand only (deploy/bin/seed): the demo businesses and the
+  # platform admin, with SEED_PASSWORD from SSM.
+  seed:
+    profiles: [ops]
+    image: ${ECR_REGISTRY:?}/support-desk/api:${IMAGE_TAG:?}
+    environment:
+      <<: *pipeline-env
+      DATABASE_MIGRATOR_URL: postgres://app_migrator:${DB_MIGRATOR_PASSWORD:?}@postgres:5432/app
+      SEED_PASSWORD: ${SEED_PASSWORD:-}
+    command: ['node', 'dist/cli/seed.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *restart
+    image: ${ECR_REGISTRY:?}/support-desk/api:${IMAGE_TAG:?}
+    environment:
+      <<: *pipeline-env
+      API_PORT: '4000'
+      DATABASE_PLATFORM_URL: postgres://app_platform:${DB_PLATFORM_PASSWORD:?}@postgres:5432/app
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?}
+      NODE_OPTIONS: --max-old-space-size=448
+    mem_limit: 640m
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+
+  worker:
+    <<: *restart
+    image: ${ECR_REGISTRY:?}/support-desk/worker:${IMAGE_TAG:?}
+    environment:
+      <<: *pipeline-env
+      NODE_OPTIONS: --max-old-space-size=448
+    mem_limit: 640m
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4020/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+
+  web:
+    <<: *restart
+    image: ${ECR_REGISTRY:?}/support-desk/web:${IMAGE_TAG:?}
+    environment:
+      APP_MODE: ${APP_MODE:?}
+      NODE_OPTIONS: --max-old-space-size=256
+    mem_limit: 384m
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+
+  # TLS and routing. The only container with published ports.
+  caddy:
+    <<: *restart
+    image: caddy:2.11.9
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTPS_PORT:-443}:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_DIR:-/data}/caddy/data:/data
+      - ${DATA_DIR:-/data}/caddy/config:/config
+    mem_limit: 128m
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }

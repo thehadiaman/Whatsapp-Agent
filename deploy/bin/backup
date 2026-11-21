@@ -1,0 +1,59 @@
+#!/bin/bash
+# Back up the database: a pg_dump in custom format, checked to read back,
+# then uploaded to the ops bucket (encrypted, versioned, expired by lifecycle).
+# Nightly from support-desk-backup.timer; by hand: sudo /opt/support-desk/current/deploy/bin/backup
+#
+# The dump runs as the postgres superuser, so row-level security does not
+# hide any tenant's rows from it. Roles are not in the dump: provision
+# recreates them from SSM on every deploy.
+#
+# Overridable for the local test (scripts/backup-restore.test.sh):
+#   PG_EXEC           command that runs a Postgres client tool next to the server
+#   BACKUP_DB         database to dump (app)
+#   BACKUP_LOCAL_DIR  where dumps are written (/data/backups)
+#   BACKUP_S3_PREFIX  where they are uploaded; empty: keep them local only
+set -euo pipefail
+
+# shellcheck source=deploy/bin/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck disable=SC1091
+[ -f /etc/support-desk/host.env ] && . /etc/support-desk/host.env
+
+DB=${BACKUP_DB:-app}
+LOCAL_DIR=${BACKUP_LOCAL_DIR:-/data/backups}
+KEEP_LOCAL=${BACKUP_KEEP_LOCAL:-3}
+S3_PREFIX=${BACKUP_S3_PREFIX-s3://${OPS_BUCKET:-}/backups}
+
+pg() {
+  if [ -n "${PG_EXEC:-}" ]; then
+    local -a exec_cmd
+    read -ra exec_cmd <<<"$PG_EXEC"
+    "${exec_cmd[@]}" "$@"
+  else
+    dc exec -T postgres "$@"
+  fi
+}
+
+mkdir -p "$LOCAL_DIR"
+name="$DB-$(date -u +%Y%m%dT%H%M%SZ).dump"
+file="$LOCAL_DIR/$name"
+
+log "dumping $DB"
+pg pg_dump -U postgres -d "$DB" --format=custom --compress=6 >"$file.partial"
+
+# A dump that cannot be listed cannot be restored: fail now, not on the bad day.
+entries=$(pg pg_restore --list <"$file.partial" | grep -c ' TABLE DATA ' || true)
+[ "$entries" -gt 0 ] || die "the dump of $DB lists no table data"
+mv "$file.partial" "$file"
+log "dump ok: $name, $(du -h "$file" | cut -f1), $entries tables with data"
+
+if [ -n "$S3_PREFIX" ]; then
+  aws s3 cp --only-show-errors --sse AES256 ${AWS_REGION:+--region "$AWS_REGION"} "$file" "$S3_PREFIX/$name"
+  log "uploaded to $S3_PREFIX/$name"
+fi
+
+# Keep the newest few on the data volume for a fast restore.
+find "$LOCAL_DIR" -maxdepth 1 -name "$DB-*.dump" -printf '%T@ %p\n' |
+  sort -rn | tail -n +"$((KEEP_LOCAL + 1))" | cut -d' ' -f2- | xargs -r rm -f
+
+printf '%s\n' "$file"

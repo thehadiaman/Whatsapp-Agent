@@ -1,0 +1,58 @@
+#!/bin/bash
+# Deploy one release on the instance. CI runs this through SSM Run Command
+# (via /usr/local/bin/support-desk-deploy, which fetches the bundle); a person
+# runs the same command to roll back:  sudo support-desk-deploy <older-sha>
+#
+# Steps: settings from SSM -> pull images -> roles and migrations -> start
+# the new containers and wait until healthy -> mark current -> tidy up.
+# The containers are replaced in place: a few seconds of downtime, the
+# single-instance trade-off (docs/RUNBOOK.md).
+set -euo pipefail
+
+SHA=${1:?usage: deploy <commit-sha>}
+# shellcheck source=deploy/bin/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck disable=SC1091
+. /etc/support-desk/host.env
+
+log "deploying $SHA"
+render_env "$SHA"
+
+log "pulling images"
+aws ecr get-login-password --region "$AWS_REGION" |
+  docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
+dc pull --quiet
+
+# Migrations run before the new code starts. They must keep the previous
+# release working (add, then remove a release later), so a rollback stays a
+# redeploy (docs/RUNBOOK.md, "Roll back").
+log "database roles and migrations"
+dc up --wait --quiet-pull postgres redis
+dc run --rm provision
+
+log "starting the new release"
+dc up --detach --wait --wait-timeout 300 --remove-orphans
+
+# Through Caddy, as a customer would arrive. Before DNS points here, or before
+# the certificate exists, this cannot pass: warn, do not fail the deploy.
+if curl -fsS --max-time 10 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/health" >/dev/null 2>&1; then
+  log "https://$DOMAIN answers"
+else
+  log "warning: https://$DOMAIN did not answer through Caddy yet (DNS or certificate?)"
+fi
+
+# Install or refresh the backup and restore-drill timers from this release.
+install -m 0644 "$RELEASE_DIR"/deploy/systemd/*.service "$RELEASE_DIR"/deploy/systemd/*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now support-desk-backup.timer support-desk-restore-drill.timer >/dev/null
+
+touch "$RELEASE_DIR"
+ln -sfn "$RELEASE_DIR" /opt/support-desk/current
+printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" >>/opt/support-desk/deploys.log
+
+# Keep the last five releases on disk and a week of unused images.
+find /opt/support-desk/releases -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+  sort -rn | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
+docker image prune --all --force --filter until=168h >/dev/null
+
+log "deployed $SHA"

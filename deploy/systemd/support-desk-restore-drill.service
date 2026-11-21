@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore the newest backup into a scratch database and check it
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/support-desk/current/deploy/bin/restore --into app_restore_check --check --drop-after latest
+Nice=10
