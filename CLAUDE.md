@@ -62,6 +62,7 @@ Multi-tenant WhatsApp AI support desk. The full brief is `docs/BRIEF.md`; decisi
 - `make test-int` — integration tests against real Postgres and Redis: row-level security, API isolation and auth, and the pipeline (dedupe, ordering, retries, dead letters, window, soak with faults, no outbound network).
 - `make e2e` — Playwright at 1440 and 390 px; screenshots land in `apps/web/e2e/screenshots/`.
 - `make up` / `make down` — everything from the production images.
+- `make readme-screenshots` — regenerates `docs/images/` from a fresh `app_readme` database and runs the README demo as a test. The README carries only numbers a script produced (`docs/LOAD-TEST.md`, `docs/EVALS.md`); the analytics screenshot shows seeded history, not measurements.
 - `make infra-check` — Terraform fmt/validate/test (mocked AWS provider, no account), shellcheck and actionlint. `make backup-test` (after `make test-int`) backs up and restores the migrated test database. `make rehearsal` runs the production Compose stack locally behind Caddy (offline, mock mode): TLS, WebSocket, only Caddy exposed, backup, drill and full restore.
 - `make eval-mock` — the 54 eval cases offline (mock model: checks the machinery, not quality). `make eval` runs them on live Bedrock with the judge: costs money, needs credentials, only when the user says so. Both write `docs/EVALS.md` (generated: never edit it by hand).
 - `make load-test` — 1,000 messages with faults into a running stack (`make dev` first); proves none lost or duplicated and writes `docs/LOAD-TEST.md` (generated).
