@@ -929,6 +929,22 @@ Everything here is written and tested offline; nothing has been applied to an AW
 - **Single instance:** seconds of downtime per deploy, one Availability Zone, and up to a day of data loss on a full restore. These are stated in the runbook with the upgrade path.
 - **The simulator is not deployed**, so there is no public demo number. P-01 allows it beside real numbers; it needs basic auth in front and a decision on who may spend Bedrock tokens through it.
 
+## Phase 10: README (2026-11-21)
+
+### D-108 The README shows only what a script measured or captured
+
+- **Numbers:** the README quotes only `docs/LOAD-TEST.md`, with its date. Answer quality is stated as not yet measured. `docs/EVALS.md` holds a mock run, and quoting it would read as quality.
+- **Screenshots:** the analytics screenshot shows the seed's generated history, and the caption says so.
+- **Where the screenshots come from:** `make readme-screenshots` seeds a separate database (`app_readme`) and lets the simulator's customers write in. It also runs the two-minute demo as a test: handoff on request, take over, reply, note, hand back, escalation word. The test-run leftovers in `e2e/screenshots` would have shown repeated takeovers and timestamped messages.
+- **Rejected:**
+  - **Hand-picked dev-database screenshots:** not reproducible.
+  - **The mock eval percentages in the README:** they measure the eval machinery, not the model.
+
+### Known gaps after phase 10
+
+- **The brief's "done" list is not met yet:** a live deployment working end to end with a real WhatsApp number, and measured answer quality in the README. Both need your AWS account, a Meta number and your go-ahead (`docs/RUNBOOK.md`, then `make eval`).
+- **Dead letters** have an admin API (`GET /api/admin/dead-letters`) but no screen.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.
