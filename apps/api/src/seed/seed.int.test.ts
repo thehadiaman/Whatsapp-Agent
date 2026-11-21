@@ -5,7 +5,7 @@ import { MockEmbedder } from '@app/assistant';
 import { createDb, schema, withTenant, type DbHandle } from '@app/db';
 import { testDatabaseUrls } from '@app/db/testing';
 import { LocalDiskStorage, retrievePassages } from '@app/pipeline';
-import { and, eq, like, ne } from 'drizzle-orm';
+import { and, eq, inArray, like, ne } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seedConversations } from './conversations.js';
 import { seedHistory } from './history.js';
@@ -17,9 +17,18 @@ let app: DbHandle;
 let storage: LocalDiskStorage;
 const tenantIds: Record<string, string> = {};
 
+// The demo businesses only: other test files add sources to their own
+// tenants in the same database while this one runs.
 async function counts() {
-  const sources = await migrator.db.select().from(schema.knowledgeSources);
-  const orders = await migrator.db.select().from(schema.orders);
+  const demo = Object.values(tenantIds);
+  const sources = await migrator.db
+    .select()
+    .from(schema.knowledgeSources)
+    .where(inArray(schema.knowledgeSources.tenantId, demo));
+  const orders = await migrator.db
+    .select()
+    .from(schema.orders)
+    .where(inArray(schema.orders.tenantId, demo));
   return { sources: sources.length, orders: orders.length };
 }
 

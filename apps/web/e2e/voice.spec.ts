@@ -31,6 +31,8 @@ async function openSneha(page: Page) {
     .getByRole('button', { name: /^\d+ Sneha Kurian,/ })
     .click();
   const handBack = page.getByRole('button', { name: /^Hand back to assistant/ });
+  // The thread must have loaded before its buttons say who holds it.
+  await expect(page.getByTestId('held-by')).toBeVisible();
   if (await handBack.isVisible()) await handBack.click();
   await expect(page.getByTestId('held-by')).toContainText('Assistant');
   return page.getByRole('list', { name: 'Conversation with Sneha Kurian' });
