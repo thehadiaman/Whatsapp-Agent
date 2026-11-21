@@ -78,6 +78,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:int
+      # app_test now holds the migrated schema: back it up and restore it.
+      - name: Backup and restore (deploy/bin/backup, deploy/bin/restore)
+        env:
+          PGPORT: '5432'
+        run: scripts/backup-restore.test.sh
 
   e2e:
     name: End-to-end (Playwright, 1440 and 390 px)
@@ -145,11 +150,22 @@ jobs:
             apps/web/e2e/screenshots
           retention-days: 7
 
+  infra:
+    name: Terraform and deploy scripts (offline)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/infra-check.sh
+
   images:
     name: Image (${{ matrix.app }}, arm64)
     # Native arm64 runner: the EC2 target is ARM, and emulated builds are slow.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -162,16 +178,91 @@ jobs:
             dockerfile: docker/service.Dockerfile
           - app: web
             dockerfile: docker/web.Dockerfile
+    env:
+      # Pushing and deploying stay off until the repository variable
+      # DEPLOY_ENABLED is "true" (docs/RUNBOOK.md); until then images are only built.
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' && matrix.app != 'simulator' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build (not pushed; pushing to ECR arrives with deploy in phase 9)
+      - name: AWS credentials (push role, OIDC)
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Sign in to ECR
+        if: env.PUSH == 'true'
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "${{ vars.ECR_REGISTRY }}"
+      - name: Build${{ env.PUSH == 'true' && ' and push to ECR' || '' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          build-args: APP=${{ matrix.app }}
+          build-args: |
+            APP=${{ matrix.app }}
+            MEDIA_ORIGIN=${{ vars.MEDIA_ORIGIN }}
           platforms: linux/arm64
-          push: false
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ env.PUSH == 'true' && format('{0}/support-desk/{1}:{2}', vars.ECR_REGISTRY, matrix.app, github.sha) || '' }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  # The deploy files the instance runs (deploy/), as s3://<ops>/releases/<sha>.tar.gz.
+  bundle:
+    name: Release bundle
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    needs: [commit-policy, verify, e2e, infra, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: |
+          tar -czf release.tar.gz deploy
+          aws s3 cp --only-show-errors --sse AES256 release.tar.gz "s3://${{ vars.OPS_BUCKET }}/releases/${{ github.sha }}.tar.gz"
+
+  # Runs deploy/bin/deploy on the instance through SSM Run Command. The
+  # "production" environment can require your approval before this starts.
+  deploy:
+    name: Deploy to EC2
+    needs: [bundle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Run the deploy on the instance
+        env:
+          INSTANCE: ${{ vars.DEPLOY_INSTANCE_ID }}
+          SHA: ${{ github.sha }}
+        run: |
+          id=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript \
+            --comment "deploy $SHA" --timeout-seconds 900 \
+            --parameters "commands=[\"/usr/local/bin/support-desk-deploy $SHA\"],executionTimeout=[\"900\"]" \
+            --query Command.CommandId --output text)
+          echo "command $id"
+          for _ in $(seq 1 180); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case $status in Pending | InProgress | Delayed) sleep 5 ;; *) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text
+          echo "status: $status"
+          [ "$status" = Success ]
