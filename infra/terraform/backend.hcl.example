@@ -1,0 +1,4 @@
+# Copy to backend.hcl (git-ignored); the bucket is the bootstrap output.
+#   terraform -chdir=infra/terraform init -backend-config=backend.hcl
+bucket = "support-desk-tfstate-123456789012"
+region = "ap-south-1"

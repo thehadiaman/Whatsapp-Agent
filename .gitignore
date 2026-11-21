@@ -27,3 +27,11 @@ apps/web/e2e/screenshots/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# terraform: providers, local state and real values stay out of the repo
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/terraform/terraform.tfvars
+infra/terraform/backend.hcl

@@ -1,0 +1,83 @@
+#!/bin/bash
+# First boot of the app instance (Amazon Linux 2023, arm64). Rendered by
+# Terraform; runs once. Installs Docker and Compose, mounts the data volume,
+# and installs the command CI runs to deploy a release.
+set -euxo pipefail
+
+# --- Docker (AL2023 repository) and the Compose plugin (pinned, checksummed)
+dnf install -y docker
+COMPOSE_VERSION=v5.7.0
+COMPOSE_SHA256=15861535d14e26555736b49376c95e14bfd94285366c8446bfac7156a972e76f
+mkdir -p /usr/libexec/docker/cli-plugins
+curl -fsSL -o /tmp/docker-compose \
+  "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-aarch64"
+echo "$COMPOSE_SHA256  /tmp/docker-compose" | sha256sum -c -
+install -m 0755 /tmp/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+
+# Rotate container logs so they cannot fill the disk.
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "5" },
+  "live-restore": true
+}
+JSON
+systemctl enable --now docker
+
+# --- 1 GB swap on the root volume: a cushion, not a memory plan.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  swapon /swapfile
+fi
+
+# --- Data volume: Postgres, Redis, Caddy's certificates and local backups.
+# On Nitro instances an EBS volume appears as NVMe; its serial is the volume
+# ID without the hyphen.
+DEVICE=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$(echo "${data_volume_id}" | tr -d -)
+for _ in $(seq 1 60); do [ -e "$DEVICE" ] && break; sleep 5; done
+[ -e "$DEVICE" ] || { echo "data volume ${data_volume_id} never appeared" >&2; exit 1; }
+# Format only a blank volume: a replaced instance keeps the existing data.
+if ! blkid "$DEVICE" >/dev/null 2>&1; then
+  mkfs.xfs "$DEVICE"
+fi
+UUID=$(blkid -s UUID -o value "$DEVICE")
+mkdir -p /data
+grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+mkdir -p /data/postgres /data/redis /data/caddy /data/backups
+
+# --- What the deploy and backup scripts need to know about this box.
+mkdir -p /etc/support-desk /opt/support-desk/releases
+cat > /etc/support-desk/host.env <<'ENV'
+AWS_REGION=${region}
+SSM_PATH=${ssm_path}
+OPS_BUCKET=${ops_bucket}
+ECR_REGISTRY=${ecr_registry}
+DOMAIN=${domain}
+ENV
+chmod 0644 /etc/support-desk/host.env
+
+# The one command CI runs through SSM: fetch a release bundle and hand over
+# to the deploy script inside it (deploy/bin/deploy).
+cat > /usr/local/bin/support-desk-deploy <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+SHA=$${1:?usage: support-desk-deploy <commit-sha>}
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "not a commit SHA: $SHA" >&2; exit 2; }
+# shellcheck disable=SC1091
+. /etc/support-desk/host.env
+DIR=/opt/support-desk/releases/$SHA
+if [ ! -d "$DIR" ]; then
+  TMP=$(mktemp -d)
+  aws s3 cp --region "$AWS_REGION" "s3://$OPS_BUCKET/releases/$SHA.tar.gz" "$TMP/release.tar.gz"
+  mkdir -p "$DIR"
+  tar -xzf "$TMP/release.tar.gz" -C "$DIR"
+  rm -rf "$TMP"
+fi
+exec "$DIR/deploy/bin/deploy" "$SHA"
+SCRIPT
+chmod 0755 /usr/local/bin/support-desk-deploy
