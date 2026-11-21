@@ -799,9 +799,139 @@ Approved on 2026-11-20: P-10 with Claude Sonnet as the judge for groundedness an
 - **Judge and embedding costs** are not in the cost per conversation.
 - **Two replies** in the rare overlap described in D-097.
 
+## Phase 9: deployment, backups and runbook (2026-11-21)
+
+Everything here is written and tested offline; nothing has been applied to an AWS account. `docs/RUNBOOK.md` is the operating manual.
+
+### D-100 Terraform: one root module, state in S3, tests with a mocked provider
+
+- **Chosen:** one root configuration in `infra/terraform`, AWS provider 6.72.0, Terraform 1.17.1 or later.
+  - **State** in an S3 bucket created once by `infra/terraform/bootstrap`, with S3-native locking (`use_lockfile`; the docs mark DynamoDB locking deprecated).
+  - **The backend is partial** (`backend.hcl`, git-ignored), so no account ID is committed.
+- **Tests:** `terraform test` with `mock_provider "aws"` pins the security properties without an account:
+  - only ports 80 and 443 are open;
+  - IMDSv2 is required;
+  - both volumes are encrypted;
+  - buckets are private, encrypted and refuse plain HTTP;
+  - media expiry follows the variable;
+  - there are no wildcard actions in the policies;
+  - each CI role trusts one `sub` claim;
+  - non-ARM instance types are refused.
+    Opening SSH makes the suite fail (checked by hand). CI runs `scripts/infra-check.sh`: fmt, validate, test, shellcheck, actionlint and a parse of the production Compose file.
+- **Rejected:**
+  - **Modules or Terragrunt:** one environment does not need them.
+  - **A plan in CI:** it needs credentials in CI for a read-only benefit; plan and apply stay a person's step.
+
+### D-101 The instance: a VPC of its own, an elastic IP, a separate data volume
+
+- **Network:** a VPC with one public subnet and no NAT gateway (an hourly charge the instance does not need, since it has a public address).
+  - The default security group is emptied.
+  - One security group allows TCP 80 and 443 and UDP 443 (HTTP/3) in, and everything out.
+  - An elastic IP gives a stable address for DNS and for Meta.
+- **Instance:** a t4g.medium on the latest Amazon Linux 2023 arm64 AMI, from the public SSM parameter.
+  - IMDSv2 is required with hop limit 2, so containers on Docker's bridge can reach the instance role.
+  - The root volume is encrypted. AMI and user-data changes are ignored, so an apply never replaces the instance by surprise; replacing it is a runbook step.
+- **First boot** installs:
+  - Docker from the AL2023 repository;
+  - the Compose plugin v5.7.0 from GitHub, checked against its published SHA-256 (it is not in AL2023's repositories);
+  - log rotation and 1 GB of swap.
+- **Data volume:** a separate encrypted 20 GB gp3 volume at `/data` (`prevent_destroy`) holds Postgres, Redis, Caddy's certificates and local backups. It is formatted only when blank, so a replacement instance picks up the existing data.
+- **Rejected:**
+  - **The default VPC:** it is shared with whatever else lives in the account.
+  - **SSH with a key pair:** the brief says Session Manager.
+  - **Postgres on the root volume:** it would tie the data's life to the instance's.
+
+### D-102 Settings through Terraform, secrets around it
+
+- **Settings:** plain String parameters under `/support-desk/prod/`, from Terraform (`APP_MODE=live`, region, bucket, public URL, models, log level, kill switch).
+- **Secrets:** SecureString parameters with the AWS managed key, written by `infra/scripts/put-secrets.sh` from the operator's machine.
+  - These are the database passwords, `BETTER_AUTH_SECRET`, `CREDENTIALS_KEY`, Meta's app secret and verify token, and optionally `SEED_PASSWORD`.
+  - The script generates what it can (hex, or base64 for the key), never overwrites without `--rotate`, and refuses to rotate `CREDENTIALS_KEY` without a typed confirmation.
+- **On the instance:** each deploy renders the path into `/etc/support-desk/app.env` (mode 600). Compose only interpolates from that file, and each container gets just the variables it needs. Values containing `$` or a newline are refused, so nothing is mangled.
+- **The database roles get their own passwords** in production, unlike development. `provision` sets them on every deploy, so rotating one is a redeploy.
+- **Rejected:**
+  - **`aws_ssm_parameter` resources for secrets:** the values would sit in the Terraform state.
+  - **Secrets Manager:** charged per secret, for rotation features we do not need.
+
+### D-103 CI/CD: OIDC, immutable images, a release bundle and SSM Run Command
+
+- **Two IAM roles behind GitHub's OIDC provider**, each trusting one `sub` claim:
+  - `push`: pushes to ECR and to `releases/` in the ops bucket, from `main` only.
+  - `deploy`: `ssm:SendCommand` with `AWS-RunShellScript` on the one instance, plus reading the result, from the `production` environment only.
+  - GitHub's docs give the claim's two formats, the original and the immutable-ID one for repositories created after 2026-07-15. Both work through `github_oidc_subject_prefix`.
+- **Images:** the existing arm64 build job pushes `support-desk/{api,worker,web}:<sha>` to repositories with immutable tags, scan on push and a keep-20 lifecycle. The web image now takes `MEDIA_ORIGIN` as a build argument. It was missing from the Dockerfile, so the content policy would have blocked S3 playback.
+- **Deploy sequence:**
+  1. A bundle job uploads `deploy/` as `releases/<sha>.tar.gz`.
+  2. The deploy job, in the `production` environment, which can require your approval, sends `support-desk-deploy <sha>`.
+  3. It polls the command and prints the instance's output.
+- **Off by default:** all of this runs only on pushes to `main` while the repository variable `DEPLOY_ENABLED` is `true`. Until then CI builds images exactly as before. Nothing can deploy until you set it.
+- **Rejected:**
+  - **Long-lived access keys in GitHub secrets.**
+  - **SSH from CI:** no port 22.
+  - **CodeDeploy:** an agent and an app spec for one instance.
+  - **Building images on the instance:** slow, and it would run untested builds.
+
+### D-104 Backups: nightly dump, checked, off the box, with a weekly restore drill
+
+- **Nightly backup** (02:00 India time): `pg_dump` in custom format as the superuser, so row-level security hides no tenant's rows.
+  - The dump is checked with `pg_restore --list`; one without table data fails the job.
+  - It is uploaded to the versioned ops bucket (30 days, plus 7 for overwritten versions). The three newest stay on `/data/backups`.
+- **Restore** (`deploy/bin/restore`):
+  - It goes into a scratch database by default, in one transaction, so a broken dump leaves nothing behind.
+  - `--check` compares tables, row-level security switches and policy counts with the live database and counts the rows.
+  - `--replace-production` stops the app, keeps the old database under a new name instead of dropping it, restores, reruns `provision` and restarts.
+  - Restoring over `app` without that flag is refused.
+- **Tested:**
+  - `scripts/backup-restore.test.sh` (CI, after the integration tests) uses the migrated `app_test`: equal row counts per table, a truncated dump failing cleanly, the guard.
+  - The local rehearsal (D-106) runs the drill and a full replace.
+  - On the dev database: 23 tables and 22,042 rows restored and checked.
+  - A weekly timer repeats the drill on the instance against the newest S3 backup.
+- **Rejected:**
+  - **EBS snapshots alone:** crash-consistent, and not testable without AWS. They remain a cheap later addition.
+  - **RDS:** point-in-time recovery, but a second paid database service, outside the brief's one-instance design. It is the first step of the upgrade path in the runbook.
+
+### D-105 Caddy, and the client address behind it
+
+- **Routing:** one site block for `DOMAIN` with automatic HTTPS and HSTS. `/api/*` goes to the API, including the inbox socket and Meta's webhook; everything else goes to the web app.
+- **No access log:** paths carry one-time invite tokens and the webhook handshake's verify token.
+- **Client address:**
+  - Caddy ignores incoming `X-Forwarded-*` by default (its docs) and sets `X-Real-IP` from the connection.
+  - Sign-in already read `X-Real-IP` (`auth.ts`). The public-route limit for invite and reset links read the connection address instead, which behind Caddy is always Caddy's. One person could have used up the limit for everyone.
+  - It now reads `X-Real-IP` too. An integration test failed before the fix and passes after.
+- **D-051 resolved:** the inbox socket upgrades to WebSocket through Caddy (101 in the rehearsal), so production does not fall back to long-polling.
+
+### D-106 A local rehearsal of the production stack
+
+- `make rehearsal` (`scripts/prod-rehearsal.sh`) builds the production images and runs `deploy/compose.prod.yaml` with the real Caddyfile, separate database passwords and Caddy's local CA. It runs in mock mode and offline.
+- **It proves:**
+  1. Provision, seed and every health check work.
+  2. HTTPS works with HSTS.
+  3. Sign-in sets a `Secure` cookie, and `/api/me` answers through Caddy.
+  4. The socket upgrades to WebSocket.
+  5. Only Caddy publishes ports.
+  6. Backup, drill and full restore work.
+  7. A spoofed `X-Real-IP` does not escape the sign-in limit.
+- **Memory at idle:** about 365 MB across the six containers, against limits that total 3 GB of the 4 GB.
+- **It does not exercise `deploy/bin/deploy` itself.** That script talks to SSM and ECR, so it is covered by shellcheck and review until the first real deploy.
+
+### D-107 Claude's IAM statement is scoped to the account, not yet to the model
+
+- **Current scope:** `bedrock-mantle:CreateInference` authorizes the account's project resource (Service Authorization Reference). The statement allows `arn:aws:bedrock-mantle:*:<account>:project/*`. The Region is a wildcard because Mumbai is served by the global endpoint.
+- **Not yet narrowed to the model:** a `bedrock-mantle:Model` condition would restrict it, but the reference does not say what the value looks like. A wrong guess would hand every conversation to a person.
+- **Next step:** the runbook's smoke test reads the value from CloudTrail after the first live call, and the condition is added then.
+- **Cohere** is scoped to its foundation-model ARN. The Marketplace subscription is a person's one-time step, so the instance has no `aws-marketplace` permissions.
+
+### Known gaps after phase 9
+
+- **Nothing has been applied.** Plan and apply need your AWS account. The first real deploy will be the first run of `deploy/bin/deploy`, of the IAM policies against real services, and of Let's Encrypt.
+- **Transcribe permissions:** Transcribe's docs describe the caller's S3 access, and the instance role grants it. Batch Ogg Opus support is still unconfirmed (phase 7). The live voice check is in the runbook's smoke test.
+- **A failed backup or drill only shows in the journal.** Nobody is notified. A CloudWatch alarm on a heartbeat is the next step.
+- **Single instance:** seconds of downtime per deploy, one Availability Zone, and up to a day of data loss on a full restore. These are stated in the runbook with the upgrade path.
+- **The simulator is not deployed**, so there is no public demo number. P-01 allows it beside real numbers; it needs basic auth in front and a decision on who may spend Bedrock tokens through it.
+
 ## Proposed, awaiting approval
 
-These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09.
+These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.
 
 - **P-01 Per-channel WhatsApp gateway.**
   - `APP_MODE` stays the local preset. In production each tenant's channel stores its Graph API base URL and secret reference, so the real number (Meta) and the public demo (simulator) share one deployment.
@@ -823,3 +953,8 @@ These came out of the first review of the brief. Approved on 2026-11-17 and buil
   - Run on both Haiku 5.5 and Haiku 4.5 and publish the comparison.
 - **P-11 Phase 1 dependencies.** Drizzle (over Kysely), Better Auth, Socket.IO through `@nestjs/websockets`, Tailwind with custom tokens plus Radix primitives, Playwright.
 - **P-12 Demo tenants.** A phone and accessories shop in Karama, Dubai (English, Arabic, Hindi and Hinglish, Malayalam) and a bakery in Kochi taking cake orders (Malayalam, English, Hindi).
+- **P-13 WhatsApp calling (proposed 2026-11-20, for after phase 10).**
+  - Customers call the business inside WhatsApp through Meta's Calling API, on the Cloud API we already use. Calls a customer starts are free (Meta's calling pricing page).
+  - Staff answer in the inbox, and later the assistant does.
+  - Twilio was rejected: a per-message and per-minute fee on top of Meta's, a rewrite of the adapter and the simulator, and no confirmed voice numbers in India or the UAE.
+  - Prerequisites only you can check: calling enabled on the number, Meta's 2,000-recipient messaging limit, and a test call from a UAE SIM.

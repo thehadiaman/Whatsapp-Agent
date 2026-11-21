@@ -1,7 +1,7 @@
 # Local stack.
 #   make dev   -> postgres + redis here; apps run on the host in watch mode.
 #   make up    -> everything in containers from the production images (profile "app").
-# Production (Caddy, resource limits, secrets from SSM) gets its own file in phase 9.
+# Production (Caddy, resource limits, secrets from SSM) is deploy/compose.prod.yaml (docs/RUNBOOK.md).
 
 name: support-desk
 
