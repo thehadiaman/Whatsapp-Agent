@@ -363,7 +363,7 @@ async function main(): Promise<number> {
       '## How to read this',
       '',
       `- Reply time includes the assistant's 1.5 s wait for more messages, the order hold behind the previous reply's delivery, and send retries after the injected failures. The model here is the mock, so a live model adds its own time: see docs/EVALS.md.`,
-      `- Machine: ${String(cpus().length)} × ${cpus()[0]?.model ?? 'unknown CPU'}, ${String(Math.round(totalmem() / 2 ** 30))} GB RAM, Node ${process.version}. These are not the EC2 numbers; phase 9 runs it there.`,
+      `- Machine: ${String(cpus().length)} × ${cpus()[0]?.model ?? 'unknown CPU'}, ${String(Math.round(totalmem() / 2 ** 30))} GB RAM, Node ${process.version}. These are laptop numbers, not the EC2 instance's.`,
       '- "On the phone" is the simulator\'s record of what each customer received, compared with what our database says was sent.',
       '- Fewer replies than messages is expected: messages that arrive while a reply is being prepared are answered together, in one reply.',
       '- The time to settle is set by the slowest replies: after an injected send failure they wait out the retry backoff (1, 2, 4 s…), and later replies in the same conversation wait behind them to keep the order.',
