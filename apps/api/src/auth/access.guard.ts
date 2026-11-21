@@ -77,15 +77,17 @@ export class AccessGuard implements CanActivate {
     }
 
     if (level === 'public') {
-      // No user yet: a route's own limit counts by address (behind the web
-      // proxy that is one address, so it acts as a ceiling for the route).
+      // No user yet: a route's own limit counts by client address. Behind
+      // Caddy the connection is always the proxy's, so the address comes from
+      // X-Real-IP, which Caddy sets from the connection (deploy/Caddyfile),
+      // as sign-in does (auth.ts).
       const publicLimit = this.reflector.getAllAndOverride<RouteLimit | undefined>(RATE_LIMIT_KEY, [
         context.getHandler(),
         context.getClass(),
       ]);
       if (publicLimit) {
         await this.rateLimiter.consume(
-          `ip:${request.ip ?? 'unknown'}`,
+          `ip:${request.header('x-real-ip') ?? request.ip ?? 'unknown'}`,
           publicLimit,
           context.switchToHttp().getResponse<Response>(),
         );

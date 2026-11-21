@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   arrangeDb,
   call,
+  clientIp,
   createTestTenant,
   signIn,
   startApi,
@@ -338,6 +339,24 @@ describe('staff', () => {
       (await call(api, `/api/staff/${owner!.id}`, { method: 'DELETE', cookie: cookies['ownerA']! }))
         .status,
     ).toBe(409);
+  });
+
+  // Behind Caddy every request arrives from the proxy's address; the client's
+  // is in X-Real-IP. Counting by the connection would let one person use up
+  // the limit for everyone opening an invite or reset link.
+  it('limits link attempts per client address, not per proxy', async () => {
+    const attempt = (ip: string) =>
+      call(api, '/api/links/invite/not-a-real-token', {
+        method: 'POST',
+        body: { password: 'brand-new-password-1' },
+        ip,
+      });
+    const noisy = clientIp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 21; i++) statuses.push((await attempt(noisy)).status);
+    expect(statuses.slice(0, 20).every((s) => s !== 429)).toBe(true);
+    expect(statuses[20]).toBe(429);
+    expect((await attempt(clientIp())).status).not.toBe(429);
   });
 });
 
