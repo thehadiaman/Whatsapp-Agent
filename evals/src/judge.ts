@@ -1,4 +1,4 @@
-import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk';
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
 import { finalJson } from '@app/live';
 import { z } from 'zod';
 import type { Language } from './cases.js';
@@ -31,13 +31,13 @@ const SYSTEM = [
 
 /** An LLM judge for groundedness and language (P-10), a stronger model than the one graded. */
 export class Judge {
-  private readonly client: AnthropicBedrockMantle;
+  private readonly client: AnthropicBedrock;
 
   constructor(
     readonly model: string,
     region: string,
   ) {
-    this.client = new AnthropicBedrockMantle({ awsRegion: region, maxRetries: 3 });
+    this.client = new AnthropicBedrock({ awsRegion: region, apiKey: null, maxRetries: 3 });
   }
 
   async grade(input: {

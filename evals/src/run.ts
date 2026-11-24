@@ -59,9 +59,12 @@ const env = process.env;
 const live = values.live;
 const region = env['AWS_REGION'] ?? 'ap-south-1';
 const modelIds = live
-  ? (values.models ?? 'anthropic.claude-haiku-5-5,anthropic.claude-haiku-4-5').split(',')
+  ? (
+      values.models ??
+      'global.anthropic.claude-haiku-5-5,global.anthropic.claude-haiku-4-5-20251001-v1:0'
+    ).split(',')
   : ['mock'];
-const judgeModel = values.judge ?? env['EVAL_JUDGE_MODEL'] ?? 'anthropic.claude-sonnet-5-5';
+const judgeModel = values.judge ?? env['EVAL_JUDGE_MODEL'] ?? 'global.anthropic.claude-sonnet-5-5';
 const cases = values.only ? CASES.filter((c) => c.id.startsWith(values.only ?? '')) : CASES;
 
 function required(name: string): string {

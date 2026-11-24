@@ -67,7 +67,7 @@ export const modelResponseSchema = z.object({
 export type ModelResponse = z.infer<typeof modelResponseSchema>;
 
 export interface ChatModel {
-  /** The model ID used for pricing, e.g. `anthropic.claude-haiku-5-5` or `mock`. */
+  /** The model ID used for pricing, e.g. `global.anthropic.claude-haiku-5-5` or `mock`. */
   readonly name: string;
   complete(request: ModelRequest): Promise<unknown>;
 }

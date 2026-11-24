@@ -4,4 +4,4 @@ github_oidc_subject_prefix = "repo:OWNER/REPO"
 budget_email               = "you@example.com"
 # budget_monthly_usd       = 40
 # media_retention_days     = 90
-# chat_model               = "anthropic.claude-haiku-4-5" # until Haiku 5.5 access is granted
+# chat_model               = "in.anthropic.claude-haiku-4-5-20251001-v1:0" # keeps requests inside India, at Haiku 4.5 prices

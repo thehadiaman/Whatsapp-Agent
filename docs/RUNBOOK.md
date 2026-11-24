@@ -24,8 +24,10 @@ How the production deployment is built, deployed, backed up, restored and repair
 Run these once, in order, from your own machine with an AWS profile that can administer the account. Terraform can come from the official image; `scripts/infra-check.sh` shows the `docker run` form.
 
 1. **Bedrock access** (console, `ap-south-1`):
-   - Request access to Claude Haiku 5.5. Until access is granted, set `chat_model = "anthropic.claude-haiku-4-5"`.
-   - Subscribe to Cohere Embed Multilingual v3 in AWS Marketplace. Invoking it once with your own credentials also starts the subscription. That's why the instance role has no `aws-marketplace` permissions.
+   - Submit Anthropic's use-case form once ("Submit use case details" on any Claude model page). Claude models can't be called until it's done.
+   - The app calls Claude through the inference profile `global.anthropic.claude-haiku-5-5` (D-109). To keep requests inside India instead, set `chat_model = "in.anthropic.claude-haiku-4-5-20251001-v1:0"`.
+   - Cohere Embed Multilingual v3 is billed through AWS Marketplace. The first call with your own credentials starts the subscription, which is why the instance role has no `aws-marketplace` permissions.
+   - A new account may answer "Your account is currently being verified" for up to a couple of hours. Wait it out.
 2. **State bucket:**
    - Run `terraform -chdir=infra/terraform/bootstrap init && terraform -chdir=infra/terraform/bootstrap apply`.
    - Copy `infra/terraform/backend.hcl.example` to `backend.hcl` and put the `state_bucket` output in it.
@@ -70,7 +72,7 @@ Run these once, in order, from your own machine with an AWS profile that can adm
     - Then, in the desk, open Settings, then WhatsApp, and enter the business's phone number ID and token. The token is stored sealed (D-094).
 11. **Smoke test:**
     - Sign in and send a text and a voice note from a real phone. Check that the reply arrives and that the voice note gets a transcript.
-    - Then open CloudTrail, find the `CreateInference` event and read its model value. Use it to add the `bedrock-mantle:Model` condition in `iam.tf` (D-107).
+    - Check that the instance role reached Claude: a reply in the inbox with a cost in its receipt means the inference profile and both foundation-model grants in `iam.tf` work (D-109).
 
 ## Deploying
 

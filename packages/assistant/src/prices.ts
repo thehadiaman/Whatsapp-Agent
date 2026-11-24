@@ -7,10 +7,11 @@ export interface ModelPrice {
  * Prices per model, recorded with every turn as a cost in micro-dollars.
  *
  * The Claude figures are Anthropic's published list prices (Haiku 5.5: prompts
- * up to 100K tokens). Claude in Amazon Bedrock is billed by AWS: its global
- * endpoint, which Mumbai uses, carries no premium (Anthropic's Bedrock page),
- * but AWS's own price table did not show these models on 2026-11-20, so the
- * figures are unconfirmed against an AWS bill (D-095). The mock costs nothing.
+ * up to 100K tokens). Claude in Amazon Bedrock is billed by AWS, and AWS's own
+ * price table did not show these models on 2026-11-20, so the figures are
+ * unconfirmed against an AWS bill (D-095). Keys are the IDs the app sends:
+ * inference profiles since D-109; the bare IDs stay for turns recorded before.
+ * A geographic profile (in.) may carry a premium over these. The mock is free.
  */
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   mock: { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0 },
@@ -18,6 +19,18 @@ export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   unconfigured: { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0 },
   'anthropic.claude-haiku-5-5': { inputUsdPerMillionTokens: 0.1, outputUsdPerMillionTokens: 0.5 },
   'anthropic.claude-haiku-4-5': { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 5 },
+  'global.anthropic.claude-haiku-5-5': {
+    inputUsdPerMillionTokens: 0.1,
+    outputUsdPerMillionTokens: 0.5,
+  },
+  'global.anthropic.claude-haiku-4-5-20251001-v1:0': {
+    inputUsdPerMillionTokens: 1,
+    outputUsdPerMillionTokens: 5,
+  },
+  'in.anthropic.claude-haiku-4-5-20251001-v1:0': {
+    inputUsdPerMillionTokens: 1,
+    outputUsdPerMillionTokens: 5,
+  },
 };
 
 /**

@@ -68,8 +68,8 @@ export const pipelineEnvSchema = z.object({
   MEDIA_BUCKET: z.string().min(3).optional(),
   /** How long a playback link to a stored file works. */
   MEDIA_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3_600).default(300),
-  /** Claude in Amazon Bedrock (bedrock-mantle), D-059. */
-  BEDROCK_CHAT_MODEL: z.string().default('anthropic.claude-haiku-5-5'),
+  /** Claude in Amazon Bedrock: an inference profile ID on bedrock-runtime (D-109). */
+  BEDROCK_CHAT_MODEL: z.string().default('global.anthropic.claude-haiku-5-5'),
   /** Cohere Embed Multilingual v3, D-090. */
   BEDROCK_EMBED_MODEL: z.string().default('cohere.embed-multilingual-v3'),
   /** Kill switch: false stops new assistant turns; conversations wait for a person. */

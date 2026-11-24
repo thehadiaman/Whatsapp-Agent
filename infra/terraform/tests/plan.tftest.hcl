@@ -208,6 +208,38 @@ run "budget_with_an_email" {
   }
 }
 
+run "claude_only_through_its_inference_profile" {
+  command = plan
+
+  assert {
+    condition     = one([for st in data.aws_iam_policy_document.instance.statement : st.resources if st.sid == "ClaudeProfile"]) == toset(["arn:aws:bedrock:ap-south-1:123456789012:inference-profile/global.anthropic.claude-haiku-5-5"])
+    error_message = "The instance may call only its own inference profile."
+  }
+
+  assert {
+    condition = toset(one([for st in data.aws_iam_policy_document.instance.statement : st.resources if st.sid == "ClaudeModelThroughProfile"])) == toset([
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-5-5",
+      "arn:aws:bedrock:::foundation-model/anthropic.claude-haiku-5-5",
+    ])
+    error_message = "Global inference needs the Regional and the Region-less foundation model."
+  }
+
+  assert {
+    condition     = toset(one([for c in one([for st in data.aws_iam_policy_document.instance.statement : st.condition if st.sid == "ClaudeModelThroughProfile"]) : c.values if c.variable == "bedrock:InferenceProfileArn"])) == toset(["arn:aws:bedrock:ap-south-1:123456789012:inference-profile/global.anthropic.claude-haiku-5-5"])
+    error_message = "The foundation model is reachable only through the profile."
+  }
+}
+
+run "rejects_a_bare_model_id" {
+  command = plan
+
+  variables {
+    chat_model = "anthropic.claude-haiku-5-5"
+  }
+
+  expect_failures = [var.chat_model]
+}
+
 run "rejects_a_non_arm_instance" {
   command = plan
 

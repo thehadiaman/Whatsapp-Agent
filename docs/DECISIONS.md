@@ -945,6 +945,24 @@ Everything here is written and tested offline; nothing has been applied to an AW
 - **The brief's "done" list is not met yet:** a live deployment working end to end with a real WhatsApp number, and measured answer quality in the README. Both need your AWS account, a Meta number and your go-ahead (`docs/RUNBOOK.md`, then `make eval`).
 - **Dead letters** have an admin API (`GET /api/admin/dead-letters`) but no screen.
 
+## After phase 10: first live checks (2026-11-24)
+
+### D-109 Claude through an inference profile on bedrock-runtime, not bedrock-mantle
+
+Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
+
+- **What the live contract suite found:** Mumbai's `bedrock-mantle` endpoint lists only three Claude models for this account (`GET /v1/models`): Opus 5, Sonnet 5 and one internal model. Calls for `anthropic.claude-haiku-5-5` returned 404. `ListInferenceProfiles` in `ap-south-1` shows `global.anthropic.claude-haiku-5-5`, `global.anthropic.claude-sonnet-5-5`, and Haiku 4.5 as both `global.` and India-only `in.` profiles. The brief's "facts checked" section had the global ID right; D-095 was wrong for Mumbai.
+- **Chosen:**
+  - `AnthropicBedrock` from the same `@anthropic-ai/bedrock-sdk` package. It sends the Messages API to `bedrock-runtime` (`/model/{id}/invoke`), so the request and response shapes, guards and tests are unchanged.
+  - `apiKey: null`, so it always signs with AWS credentials.
+  - The default model is `global.anthropic.claude-haiku-5-5`, chosen by you on 2026-11-24. The eval compares it with `global.anthropic.claude-haiku-4-5-20251001-v1:0`, graded by `global.anthropic.claude-sonnet-5-5`.
+- **Data residency:** a global profile may process a request in any commercial Region. Nothing is stored there; the app stores data in Mumbai. `in.anthropic.claude-haiku-4-5-20251001-v1:0` keeps requests inside India at Haiku 4.5's price, one setting away (`BEDROCK_CHAT_MODEL`, Terraform `chat_model`).
+- **IAM** (AWS's "global cross-Region inference" docs): `bedrock:InvokeModel` on the profile in this Region, and on the foundation model both in any Region and Region-less (`arn:aws:bedrock:::foundation-model/…`). The model grants carry a `bedrock:InferenceProfileArn` condition, so the model is reachable only through this profile. `chat_model` must be a profile ID. Terraform tests pin both rules.
+- **Rejected:**
+  - **`bedrock-mantle` in another Region:** it moves stored data out of India and adds a second Region to operate.
+  - **The Converse API:** a different request shape for the same result, and a rewrite of the adapter and its tests.
+- **Also confirmed live:** S3 keeps, returns and deletes an object, and a Polly Ogg Opus voice note goes through S3 and batch Transcribe back to the right words in the right language. That settles the open question from phase 7.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.

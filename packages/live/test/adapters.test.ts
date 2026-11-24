@@ -70,7 +70,7 @@ describe('Claude on Bedrock', () => {
     };
     return {
       model: new BedrockChatModel({
-        model: 'anthropic.claude-haiku-5-5',
+        model: 'global.anthropic.claude-haiku-5-5',
         region: 'ap-south-1',
         client,
       }),
@@ -86,12 +86,12 @@ describe('Claude on Bedrock', () => {
     });
     const response = await completeValidated(m, request);
     expect(response).toEqual({
-      model: 'anthropic.claude-haiku-5-5',
+      model: 'global.anthropic.claude-haiku-5-5',
       usage: { inputTokens: 2341, outputTokens: 118 },
       result: { type: 'answer', answer: { reply: 'It shipped with Aramex.', basis: 'order' } },
     });
     expect(sent[0]).toMatchObject({
-      model: 'anthropic.claude-haiku-5-5',
+      model: 'global.anthropic.claude-haiku-5-5',
       max_tokens: 512,
       system: 'You are the assistant for Qamar Phone Corner.',
       tools: [{ name: 'lookup_order', input_schema: { type: 'object' } }],

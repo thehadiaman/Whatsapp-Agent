@@ -66,7 +66,7 @@ const suites: [string, () => Adapters, boolean][] = [
     'live',
     () => ({
       model: new BedrockChatModel({
-        model: process.env['BEDROCK_CHAT_MODEL'] ?? 'anthropic.claude-haiku-5-5',
+        model: process.env['BEDROCK_CHAT_MODEL'] ?? 'global.anthropic.claude-haiku-5-5',
         region,
       }),
       embedder: new BedrockEmbedder({

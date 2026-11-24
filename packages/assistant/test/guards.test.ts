@@ -72,6 +72,10 @@ describe('costMicros', () => {
     expect(costMicros('anthropic.claude-haiku-5-5', { inputTokens: 2341, outputTokens: 118 })).toBe(
       Math.ceil(2341 * 0.1 + 118 * 0.5),
     );
+    // The inference profile the app sends since D-109 is priced the same.
+    expect(
+      costMicros('global.anthropic.claude-haiku-5-5', { inputTokens: 2341, outputTokens: 118 }),
+    ).toBe(Math.ceil(2341 * 0.1 + 118 * 0.5));
     expect(costMicros('mock', { inputTokens: 5000, outputTokens: 500 })).toBe(0);
   });
 

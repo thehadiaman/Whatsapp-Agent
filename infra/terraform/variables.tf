@@ -16,7 +16,7 @@ variable "environment" {
 }
 
 variable "region" {
-  description = "AWS Region. Mumbai: Claude through the global bedrock-mantle endpoint, Cohere in-region (D-090, D-095)."
+  description = "AWS Region. Mumbai: Claude through a global inference profile, Cohere in-region (D-090, D-109)."
   type        = string
   default     = "ap-south-1"
 }
@@ -72,9 +72,14 @@ variable "backup_retention_days" {
 }
 
 variable "chat_model" {
-  description = "Claude model ID on bedrock-mantle (D-095). anthropic.claude-haiku-5-5 needs access granted first."
+  description = "Claude inference profile ID on bedrock-runtime (D-109). global.* may process requests in any commercial Region; in.anthropic.claude-haiku-4-5-20251001-v1:0 stays in India."
   type        = string
-  default     = "anthropic.claude-haiku-5-5"
+  default     = "global.anthropic.claude-haiku-5-5"
+
+  validation {
+    condition     = can(regex("^[a-z]+\\.anthropic\\.", var.chat_model))
+    error_message = "An inference profile ID such as global.anthropic.claude-haiku-5-5: Mumbai has no in-Region Claude Haiku."
+  }
 }
 
 variable "embed_model" {

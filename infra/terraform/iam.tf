@@ -2,6 +2,12 @@
 # AWS keys exist anywhere; containers get these credentials from the instance
 # metadata service (IMDSv2, hop limit 2 so Docker containers can reach it).
 
+locals {
+  # "global.anthropic.claude-haiku-5-5" -> "anthropic.claude-haiku-5-5"
+  chat_foundation_model = regex("^(?:[a-z]+\\.)?(anthropic\\..+)$", var.chat_model)[0]
+  chat_profile_arn      = "arn:${local.partition}:bedrock:${var.region}:${local.account_id}:inference-profile/${var.chat_model}"
+}
+
 data "aws_iam_policy_document" "ec2_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -125,15 +131,30 @@ data "aws_iam_policy_document" "instance" {
     resources = ["*"]
   }
 
-  # Claude through bedrock-mantle authorizes CreateInference on the account's
-  # project (Service Authorization Reference, "Bedrock Powered by AWS Mantle").
-  # A bedrock-mantle:Model condition would narrow it to one model; its value
-  # format is not documented yet, so it is left out until a live call shows
-  # it in CloudTrail (docs/RUNBOOK.md).
+  # Claude through an inference profile on bedrock-runtime (D-109). For a
+  # global profile, AWS's "global cross-Region inference" docs require three
+  # resources: the profile in this Region, the foundation model in this
+  # Region, and the Region-less global foundation model. Each model grant only
+  # applies when the call comes through this profile.
   statement {
-    sid       = "Claude"
-    actions   = ["bedrock-mantle:CreateInference"]
-    resources = ["arn:${local.partition}:bedrock-mantle:*:${local.account_id}:project/*"]
+    sid       = "ClaudeProfile"
+    actions   = ["bedrock:InvokeModel"]
+    resources = [local.chat_profile_arn]
+  }
+
+  statement {
+    sid     = "ClaudeModelThroughProfile"
+    actions = ["bedrock:InvokeModel"]
+    resources = [
+      "arn:${local.partition}:bedrock:*::foundation-model/${local.chat_foundation_model}",
+      "arn:${local.partition}:bedrock:::foundation-model/${local.chat_foundation_model}",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock:InferenceProfileArn"
+      values   = [local.chat_profile_arn]
+    }
   }
 
   # Cohere embeddings in-region. The Marketplace subscription is made once by

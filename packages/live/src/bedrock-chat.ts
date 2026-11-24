@@ -1,4 +1,4 @@
-import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk';
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
 import {
   ModelUnavailableError,
   type ChatModel,
@@ -6,7 +6,7 @@ import {
   type ModelRequest,
 } from '@app/assistant';
 
-type CreateParams = Parameters<AnthropicBedrockMantle['messages']['create']>[0];
+type CreateParams = Parameters<AnthropicBedrock['messages']['create']>[0];
 
 /** The part of the SDK client the adapter uses; tests pass a fake. */
 export interface MessagesClient {
@@ -75,7 +75,9 @@ function statusOf(error: unknown): number | null {
 }
 
 /**
- * Claude in Amazon Bedrock through the Messages API (bedrock-mantle, D-059).
+ * Claude in Amazon Bedrock through the Messages API on bedrock-runtime
+ * (InvokeModel), named by an inference profile such as
+ * `global.anthropic.claude-haiku-5-5` (D-109; Mumbai has no in-Region Haiku).
  * Credentials come from the default AWS chain: the instance role on EC2.
  */
 export class BedrockChatModel implements ChatModel {
@@ -92,7 +94,9 @@ export class BedrockChatModel implements ChatModel {
     this.name = options.model;
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.client =
-      options.client ?? new AnthropicBedrockMantle({ awsRegion: options.region, maxRetries: 2 });
+      options.client ??
+      // apiKey null: always sign with AWS credentials, never a Bedrock API key from the environment.
+      new AnthropicBedrock({ awsRegion: options.region, apiKey: null, maxRetries: 2 });
   }
 
   async complete(request: ModelRequest): Promise<unknown> {
