@@ -12,6 +12,7 @@ cd "$ROOT"
 set -a
 # shellcheck source=/dev/null
 . "$ROOT/.env.example"
+# shellcheck source=/dev/null # optional, and absent on CI
 [ -f "$ROOT/.env" ] && . "$ROOT/.env"
 set +a
 

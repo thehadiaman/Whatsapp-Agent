@@ -46,7 +46,9 @@ export default defineConfig({
       // The same standalone server the Docker image runs. Run through sh with
       // `exec` (not pnpm) so Playwright's shutdown signal reaches the server.
       command: `sh -c 'cp -r .next/static .next/standalone/apps/web/.next/ && cp -r public .next/standalone/apps/web/ && HOSTNAME=localhost PORT=${webPort} exec node .next/standalone/apps/web/server.js'`,
-      url: `http://127.0.0.1:${webPort}/health`,
+      // The server binds to the name "localhost", so check it by that name: on
+      // GitHub's runners it resolves to ::1, not 127.0.0.1.
+      url: `http://localhost:${webPort}/health`,
       reuseExistingServer: !ci,
       timeout: 120_000,
     },

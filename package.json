@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
     "build:packages": "pnpm --filter './packages/*' build",
-    "build:libs": "pnpm build:packages && pnpm --filter @app/api build",
+    "build:libs": "pnpm build:packages && pnpm --filter @app/api --filter @app/simulator build",
     "build": "pnpm -r build",
     "dev": "pnpm build:packages && pnpm -r --parallel dev",
     "db:provision": "pnpm build:packages && pnpm --filter @app/db run provision",
