@@ -995,6 +995,7 @@ Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
 - **Chosen:** for now, the public demo uses the simulator (P-01), and real WhatsApp waits for Meta business verification (a document in your name, such as Udyam or PAN, if you decide to get one). Decided by you on 2026-11-25.
 - **What is still proven against Meta:** the system user token authenticates, the product's request format is accepted (HTTP 200 with a `wamid`), and delivery status webhooks reach the app's handler format (the failed-status payload matches what `@app/whatsapp` parses).
 - **Consequence for the brief's "done" list:** "works end to end with a real WhatsApp number" stays open until verification. The README must say so.
+- **Meta support confirmed it (2026-11-25, case 40581387218141297):** Meta's support assistant reported a portfolio-level "Hard Lock" ("Verification required"). It said this overrides the test number's usual allowance and blocks all messaging, test messages included, until the business is verified. The case stays open in case a human agent can make an exception for a personal developer account.
 
 ### D-113 The public demo: the simulator page beside the live desk, behind a password
 
