@@ -963,6 +963,15 @@ Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
   - **The Converse API:** a different request shape for the same result, and a rewrite of the adapter and its tests.
 - **Also confirmed live:** S3 keeps, returns and deletes an object, and a Polly Ogg Opus voice note goes through S3 and batch Transcribe back to the right words in the right language. That settles the open question from phase 7.
 
+### D-110 A smoke test for a real Meta token, and a gap it showed
+
+- **What:** `scripts/whatsapp-smoke.mjs` sends one approved template message through Meta's Cloud API, with the request built by `@app/whatsapp`'s `messageBody`, so it checks the product's request shape as well as the token. It reads `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and `WHATSAPP_API_VERSION` from `.env` and prints Meta's answer with the token hidden. The app never reads these; each business's token is still entered in Settings and sealed (D-094).
+- **Run on 2026-11-25:**
+  - Meta's temporary API Setup token had expired (error 190).
+  - A system user token (admin, with the WhatsApp account and the Messaging account assigned, and `business_management`, `whatsapp_business_management` and `whatsapp_business_messaging`) authenticated.
+  - `hello_world` was accepted (HTTP 200, a `wamid`).
+- **Gap found:** `jaspers_market_order_confirmation_v1` failed with 132000, because its body has 3 variables and we sent none. The product sends the reopen template (P-05, D-087) without variable values too, so a business that picks a template with variables would hit the same error. Until template variables are supported, the Settings page and the runbook must say the reopen template has to have no variables.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.
