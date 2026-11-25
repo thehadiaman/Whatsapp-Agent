@@ -987,6 +987,15 @@ Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
   - **A public demo needs another route:** strangers cannot message a test number, so the demo should be the simulator page beside the desk, behind a password (P-01 allows both on one deployment).
   - **AWS Pay by invoice may also be harder for an individual,** which would make Titan the fallback for embeddings.
 
+### D-112 Correction to D-111: Meta requires business verification before any message
+
+- **What changed:** D-111 read Meta's messaging-limits page (250 conversations a day for new portfolios) as meaning an unverified business can message. This account's WhatsApp Manager says otherwise, on both messaging accounts: "Account restricted: Before you can begin messaging, you will need to verify your business."
+  - Every send was accepted by the API (HTTP 200) and then failed at delivery with 131031 "Business account has been locked", even to a verified test recipient.
+  - Meanwhile the health-status API showed the WhatsApp account as `AVAILABLE` and `APPROVED`. Business Support Home shows no penalty and no appeal; the only action offered is "Verify your business".
+- **Chosen:** for now, the public demo uses the simulator (P-01), and real WhatsApp waits for Meta business verification (a document in your name, such as Udyam or PAN, if you decide to get one). Decided by you on 2026-11-25.
+- **What is still proven against Meta:** the system user token authenticates, the product's request format is accepted (HTTP 200 with a `wamid`), and delivery status webhooks reach the app's handler format (the failed-status payload matches what `@app/whatsapp` parses).
+- **Consequence for the brief's "done" list:** "works end to end with a real WhatsApp number" stays open until verification. The README must say so.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.
