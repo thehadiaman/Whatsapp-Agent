@@ -6,6 +6,7 @@
 #
 #   infra/scripts/put-secrets.sh               generate missing secrets, ask for Meta's
 #   infra/scripts/put-secrets.sh --seed        also set SEED_PASSWORD (public demo)
+#   infra/scripts/put-secrets.sh --demo        set the password for the simulator page (D-113)
 #   infra/scripts/put-secrets.sh --rotate NAME replace one generated secret
 #
 # Generated values are hex or base64 without "$" or newlines, so the deploy's
@@ -16,11 +17,12 @@ set -euo pipefail
 
 SSM_PATH=${SSM_PATH:-/support-desk/prod}
 REGION=${AWS_REGION:-ap-south-1}
-seed=false rotate=
+seed=false demo=false rotate=
 
 while [ $# -gt 0 ]; do
   case $1 in
     --seed) seed=true; shift ;;
+    --demo) demo=true; shift ;;
     --rotate) rotate=${2:?--rotate needs a name}; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -46,6 +48,9 @@ declare -A GENERATED=(
   [DB_PLATFORM_PASSWORD]="hex 24"
   [BETTER_AUTH_SECRET]="hex 32"
   [CREDENTIALS_KEY]="openssl rand -base64 32"
+  [SIMULATOR_ACCESS_TOKEN]="hex 24"
+  [SIMULATOR_APP_SECRET]="hex 24"
+  [SIMULATOR_VERIFY_TOKEN]="hex 24"
 )
 
 if [ -n "$rotate" ]; then
@@ -97,4 +102,18 @@ if $seed; then
   [ ${#value} -ge 12 ] || { echo "too short" >&2; exit 1; }
   case $value in *'$'*) echo "must not contain \$" >&2; exit 1 ;; esac
   put SEED_PASSWORD "$value"
+fi
+
+# The demo page's password (D-113). Only its bcrypt hash is stored, base64-
+# encoded because the hash contains "$" (see render_demo_auth in deploy/bin/lib.sh).
+# Hashed with Caddy's own tool, reading the password from stdin.
+if $demo; then
+  read -r -s -p "Password for the demo page (12+ characters, user 'demo'): " value
+  echo
+  [ ${#value} -ge 12 ] || { echo "too short" >&2; exit 1; }
+  hash=$(printf '%s' "$value" | docker run --rm -i caddy:2.11.9 caddy hash-password | tail -n 1)
+  # shellcheck disable=SC2016 # a literal "$2": bcrypt hashes start with it
+  [[ "$hash" == '$2'* ]] || { echo "hashing failed" >&2; exit 1; }
+  put DEMO_PASSWORD_HASH_B64 "$(printf '%s' "$hash" | base64 -w0)"
+  echo "Share the user name 'demo' and this password with the people you invite."
 fi

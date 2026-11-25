@@ -14,6 +14,9 @@ locals {
     BEDROCK_EMBED_MODEL   = var.embed_model
     LOG_LEVEL             = "info"
     ASSISTANT_ENABLED     = "true"
+    # The demo's customer side, behind a password (D-113).
+    SIM_DOMAIN = "sim.${var.domain}"
+    DEMO_USER  = "demo"
   }
 }
 

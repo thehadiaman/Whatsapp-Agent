@@ -11,6 +11,8 @@
 #   5. only Caddy publishes ports
 #   6. backup, restore drill, and a full --replace-production restore
 #   7. a client cannot choose its own address: spoofed X-Real-IP is replaced
+#   8. the demo's simulator page needs its password, and a customer message
+#      sent through it (via Caddy) is answered by the assistant (D-113)
 #
 #   make rehearsal        (needs Docker; builds the images first)
 # Ports: 8081 and 8443 unless REHEARSAL_HTTP_PORT / REHEARSAL_HTTPS_PORT are set.
@@ -25,6 +27,8 @@ WORK=$(mktemp -d)
 export APP_ENV=$WORK/app.env
 export BACKUP_LOCAL_DIR=$WORK/backups BACKUP_S3_PREFIX="" CONFIRM=yes
 PASSWORD=rehearsal-password-1
+DEMO_PASSWORD=rehearsal-demo-password-1
+SIM="https://sim.localhost:${REHEARSAL_HTTPS_PORT:-8443}"
 
 # shellcheck source=deploy/bin/lib.sh
 . "$ROOT/deploy/bin/lib.sh"
@@ -45,8 +49,8 @@ step() { log "== $*"; }
 hexkey() { openssl rand -hex "$1"; }
 
 step "building the production images"
-docker compose -f "$ROOT/compose.yaml" --profile app build api worker web >/dev/null
-for app in api worker web; do
+docker compose -f "$ROOT/compose.yaml" --profile app build api worker web simulator >/dev/null
+for app in api worker web simulator; do
   docker tag "support-desk-$app" "rehearsal.local/support-desk/$app:rehearsal"
 done
 
@@ -73,7 +77,16 @@ CREDENTIALS_KEY=$(openssl rand -base64 32)
 META_APP_SECRET=$(hexkey 16)
 META_VERIFY_TOKEN=$(hexkey 16)
 SEED_PASSWORD=$PASSWORD
+SIMULATOR_ACCESS_TOKEN=$(hexkey 24)
+SIMULATOR_APP_SECRET=$(hexkey 24)
+SIMULATOR_VERIFY_TOKEN=$(hexkey 24)
+SIM_DOMAIN=sim.localhost
+DEMO_USER=demo
+DEMO_PASSWORD_HASH_B64=$(printf '%s' "$DEMO_PASSWORD" | docker run --rm -i caddy:2.11.9 caddy hash-password | tail -n 1 | base64 -w0)
+DEMO_AUTH_FILE=$WORK/demo-auth.caddy
 ENV
+export DEMO_AUTH_FILE=$WORK/demo-auth.caddy
+render_demo_auth
 mkdir -p "$WORK/data/postgres" "$WORK/data/redis" "$WORK/data/caddy" "$BACKUP_LOCAL_DIR"
 
 step "1. provision, seed and start (as deploy/bin/deploy does)"
@@ -129,5 +142,24 @@ for i in 1 2 3 4 5 6; do
     head -1 | cut -d' ' -f2)
 done
 [ "$status" = 429 ] || fail "six wrong passwords from 'different' addresses were not limited (last: $status)"
+
+step "8. the demo page needs its password, and a customer message through it is answered"
+sim() { curl -sk --resolve "sim.localhost:$HTTPS_PORT:127.0.0.1" "$@"; }
+[ "$(sim -o /dev/null -w '%{http_code}' "$SIM/")" = 401 ] || fail "the demo page answered without a password"
+[ "$(sim -o /dev/null -w '%{http_code}' -u "demo:wrong-password" "$SIM/")" = 401 ] || fail "a wrong demo password was accepted"
+[ "$(sim -o /dev/null -w '%{http_code}' -u "demo:$DEMO_PASSWORD" "$SIM/")" = 200 ] || fail "the demo page refused the right password"
+rafi=AE.40000000000000000003
+# Replies on Rafi's simulated phone (grep finds none at first: not an error).
+replies() { sim -u "demo:$DEMO_PASSWORD" "$SIM/control/threads/$rafi" | { grep -o '"direction":"out"' || true; } | wc -l; }
+before=$(replies)
+sent=$(sim -o /dev/null -w '%{http_code}' -u "demo:$DEMO_PASSWORD" -H 'content-type: application/json' \
+  -d "{\"customerId\":\"$rafi\",\"text\":\"Do you repair screens?\"}" "$SIM/control/messages")
+[ "$sent" = 202 ] || fail "sending as a customer through the demo page: HTTP $sent"
+for _ in $(seq 1 30); do
+  after=$(replies)
+  [ "$after" -gt "$before" ] && break
+  sleep 1
+done
+[ "$after" -gt "$before" ] || fail "the assistant's reply never reached the simulated phone"
 
 log "rehearsal passed"

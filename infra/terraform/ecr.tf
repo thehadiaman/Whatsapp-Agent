@@ -2,7 +2,7 @@
 # so a deploy always runs exactly the image CI built and tested.
 
 locals {
-  images = toset(["api", "worker", "web"])
+  images = toset(["api", "worker", "web", "simulator"])
 }
 
 resource "aws_ecr_repository" "app" {

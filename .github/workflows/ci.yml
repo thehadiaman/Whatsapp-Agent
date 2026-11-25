@@ -181,7 +181,7 @@ jobs:
     env:
       # Pushing and deploying stay off until the repository variable
       # DEPLOY_ENABLED is "true" (docs/RUNBOOK.md); until then images are only built.
-      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' && matrix.app != 'simulator' }}
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

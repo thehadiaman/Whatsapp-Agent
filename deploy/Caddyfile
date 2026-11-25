@@ -28,3 +28,16 @@
 		}
 	}
 }
+
+# The demo's customer side (D-113): the simulator page, behind a password
+# because every message a visitor sends costs Bedrock tokens. The file holds
+# one basic_auth block written on each deploy from SSM (deploy/bin/lib.sh).
+{$SIM_DOMAIN} {
+	encode zstd gzip
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	import /etc/caddy/demo-auth.caddy
+
+	reverse_proxy simulator:4010
+}

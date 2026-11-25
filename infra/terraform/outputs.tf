@@ -3,6 +3,11 @@ output "public_ip" {
   value       = aws_eip.app.public_ip
 }
 
+output "sim_domain" {
+  description = "The demo's simulator page. Add an A record for it pointing at public_ip too."
+  value       = "sim.${var.domain}"
+}
+
 output "instance_id" {
   description = "For Session Manager and the DEPLOY_INSTANCE_ID GitHub variable."
   value       = aws_instance.app.id

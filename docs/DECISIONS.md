@@ -996,6 +996,21 @@ Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
 - **What is still proven against Meta:** the system user token authenticates, the product's request format is accepted (HTTP 200 with a `wamid`), and delivery status webhooks reach the app's handler format (the failed-status payload matches what `@app/whatsapp` parses).
 - **Consequence for the brief's "done" list:** "works end to end with a real WhatsApp number" stays open until verification. The README must say so.
 
+### D-113 The public demo: the simulator page beside the live desk, behind a password
+
+- **Context:** real WhatsApp needs Meta business verification (D-112), and a test number only reaches up to five verified recipients. So visitors and interviewers can't be the customer on WhatsApp itself.
+- **Chosen:** production runs the simulator as a seventh container, reachable only through Caddy at `sim.<domain>`, behind HTTP basic auth (user `demo`).
+  - The API and worker reach it inside the Docker network (P-01: simulator numbers beside real ones).
+  - Everything else is live: Claude, Cohere, Transcribe and Polly for replies, S3, backups.
+  - The password matters because every message costs Bedrock tokens. The per-business daily token budget still caps the damage if it leaks.
+- **The hash never travels through the environment:** Caddy wants a bcrypt hash, which contains `$`. Compose would expand it, and `render_env` refuses it. So `put-secrets.sh --demo` hashes the password with Caddy's own tool (from stdin) and stores it base64-encoded. Each deploy decodes it into a one-block file that the Caddyfile imports.
+- **Tested** in `make rehearsal` (step 8): no password and a wrong password get 401; the right one gets the page. A customer message sent through Caddy is answered on the simulated phone.
+- **Limit:** a voice note from the simulator page carries the simulator's recorded sample clip, so live Transcribe transcribes that recording, not the typed words. Voice transcription is shown with a real phone, once WhatsApp is verified.
+- **Rejected:**
+  - **No password:** anyone could spend Bedrock tokens.
+  - **A path under the desk's domain:** the simulator page uses absolute `/control` URLs, which would clash with the desk.
+  - **Mock mode for the whole demo:** it would show scripted answers, not Claude.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.

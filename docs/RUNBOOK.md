@@ -42,10 +42,12 @@ Run these once, in order, from your own machine with an AWS profile that can adm
 4. **Apply:**
    - Run `terraform -chdir=infra/terraform init -backend-config=backend.hcl`, then `plan -out=tfplan`. Read the plan, then `apply tfplan`.
    - Note the outputs: `public_ip`, `instance_id`, `ops_bucket`, `media_origin`, `ecr_registry` and the two role ARNs.
-5. **DNS:** point the domain's A record at `public_ip`. Caddy obtains the certificate the first time a request arrives over HTTPS after the record resolves.
+5. **DNS:** add two A records pointing at `public_ip`: the desk (`domain`) and the demo page (`sim_domain`, `sim.<domain>`). For `desk.hadiaman.com` at GoDaddy, that's records named `desk` and `sim.desk`. Caddy obtains each certificate the first time a request arrives over HTTPS after the record resolves.
 6. **Secrets:** `AWS_REGION=ap-south-1 infra/scripts/put-secrets.sh`.
    - It generates the database passwords, `BETTER_AUTH_SECRET` and `CREDENTIALS_KEY`, asks for Meta's app secret, and generates the webhook verify token, which it prints once.
+   - It also generates the simulator's three secrets, which the demo needs.
    - Add `--seed` to also set `SEED_PASSWORD` for the public demo accounts.
+   - Add `--demo` to set the password for the demo page (user `demo`). It's hashed locally with Caddy's own tool, and only the hash goes to SSM. Docker must be running on your machine.
 7. **GitHub:**
    - Create the environment `production`, with yourself as required reviewer and deployments limited to `main`.
    - Add these repository variables from the outputs:
@@ -66,12 +68,14 @@ Run these once, in order, from your own machine with an AWS profile that can adm
    - Push to `main`. CI then tests everything, pushes the images, uploads the bundle and waits for your approval in `production`.
    - Once approved, it runs `support-desk-deploy <sha>` on the instance and prints the output.
 9. **Demo data** (optional): `aws ssm start-session --target <instance_id>`, then `sudo /opt/support-desk/current/deploy/bin/seed`. This creates the platform admin and the two demo businesses with `SEED_PASSWORD`.
-10. **Meta:**
+10. **Meta** (only for real WhatsApp numbers; Meta requires business verification before any message is delivered, D-112):
     - In the Meta app, set the webhook URL to `https://<domain>/api/webhooks/whatsapp/meta`, with the verify token from step 6. Subscribe to `messages`.
     - Add a payment method in Billing Hub. Since 1 October 2026, Meta stops delivering service messages after the first 1,000 a month per number when none is on file.
     - Then, in the desk, open Settings, then WhatsApp, and enter the business's phone number ID and token. The token is stored sealed (D-094).
 11. **Smoke test:**
-    - Sign in and send a text and a voice note from a real phone. Check that the reply arrives and that the voice note gets a transcript.
+    - Open `https://sim.<domain>` with user `demo` and the demo password. As a customer, send a text; the reply should appear on the simulated phone and in the desk's inbox.
+    - With a verified Meta business, send a text and a voice note from a real phone too. Check that the reply arrives and that the voice note gets a transcript.
+    - A voice note sent from the simulator page carries the simulator's recorded sample clip. Live Transcribe transcribes that recording, not the words you typed, so use a real phone to test voice transcription.
     - Check that the instance role reached Claude: a reply in the inbox with a cost in its receipt means the inference profile and both foundation-model grants in `iam.tf` work (D-109).
 
 ## Deploying

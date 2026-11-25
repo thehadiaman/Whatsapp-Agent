@@ -17,6 +17,7 @@ SHA=${1:?usage: deploy <commit-sha>}
 
 log "deploying $SHA"
 render_env "$SHA"
+render_demo_auth
 
 log "pulling images"
 aws ecr get-login-password --region "$AWS_REGION" |

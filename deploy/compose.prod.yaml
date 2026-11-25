@@ -9,7 +9,12 @@
 # (scripts/prod-rehearsal.sh); on the instance they keep their defaults.
 #
 # Memory on a 4 GB t4g.medium: postgres 1 GB, api and worker 640 MB each,
-# web 384 MB, redis 256 MB, caddy 128 MB; about 1 GB left for the OS.
+# web 384 MB, redis 256 MB, simulator 192 MB, caddy 128 MB; about 800 MB left
+# for the OS.
+#
+# The simulator is the public demo (D-113): real WhatsApp needs Meta business
+# verification (D-112), so visitors play the customer on the simulator page,
+# behind a password, while everything else (Claude, voice, S3) is live.
 
 name: support-desk
 
@@ -32,6 +37,11 @@ x-pipeline-env: &pipeline-env
   META_APP_SECRET: ${META_APP_SECRET:?}
   META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:?}
   ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-true}
+  # The demo numbers live on the simulator, inside the Docker network (P-01).
+  SIMULATOR_GRAPH_URL: http://simulator:4010
+  SIMULATOR_ACCESS_TOKEN: ${SIMULATOR_ACCESS_TOKEN:?}
+  SIMULATOR_APP_SECRET: ${SIMULATOR_APP_SECRET:?}
+  SIMULATOR_VERIFY_TOKEN: ${SIMULATOR_VERIFY_TOKEN:?}
   # Used only in mock mode (the rehearsal); live mode stores media in S3.
   MEDIA_STORAGE_DIR: /data/media
 
@@ -168,21 +178,51 @@ services:
         - -e
         - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
+  # The customers' side of the demo. Reached from outside only through Caddy,
+  # behind a password; the API and worker call it inside the network.
+  simulator:
+    <<: *restart
+    image: ${ECR_REGISTRY:?}/support-desk/simulator:${IMAGE_TAG:?}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SIMULATOR_HOST: 0.0.0.0
+      SIMULATOR_PORT: '4010'
+      SIMULATOR_WEBHOOK_URL: http://api:4000/api/webhooks/whatsapp/simulator
+      # Media URLs it hands out are fetched by the worker, inside the network.
+      SIMULATOR_PUBLIC_URL: http://simulator:4010
+      SIMULATOR_ACCESS_TOKEN: ${SIMULATOR_ACCESS_TOKEN:?}
+      SIMULATOR_APP_SECRET: ${SIMULATOR_APP_SECRET:?}
+      SIMULATOR_VERIFY_TOKEN: ${SIMULATOR_VERIFY_TOKEN:?}
+      NODE_OPTIONS: --max-old-space-size=128
+    mem_limit: 192m
+    healthcheck:
+      <<: *node-health
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+
   # TLS and routing. The only container with published ports.
   caddy:
     <<: *restart
     image: caddy:2.11.9
     environment:
       DOMAIN: ${DOMAIN:?}
+      SIM_DOMAIN: ${SIM_DOMAIN:?}
     ports:
       - '${HTTP_PORT:-80}:80'
       - '${HTTPS_PORT:-443}:443'
       - '${HTTPS_PORT:-443}:443/udp'
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The demo password (user and bcrypt hash), written by deploy/bin/lib.sh.
+      - ${DEMO_AUTH_FILE:-/etc/support-desk/demo-auth.caddy}:/etc/caddy/demo-auth.caddy:ro
       - ${DATA_DIR:-/data}/caddy/data:/data
       - ${DATA_DIR:-/data}/caddy/config:/config
     mem_limit: 128m
     depends_on:
       api: { condition: service_healthy }
       web: { condition: service_healthy }
+      simulator: { condition: service_healthy }
