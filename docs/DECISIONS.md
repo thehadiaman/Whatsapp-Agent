@@ -972,6 +972,21 @@ Supersedes the endpoint choice in D-095 and the IAM statement in D-107.
   - `hello_world` was accepted (HTTP 200, a `wamid`).
 - **Gap found:** `jaspers_market_order_confirmation_v1` failed with 132000, because its body has 3 variables and we sent none. The product sends the reopen template (P-05, D-087) without variable values too, so a business that picks a template with variables would hit the same error. Until template variables are supported, the Settings page and the runbook must say the reopen template has to have no variables.
 
+### D-111 Personal use: no Meta business verification
+
+- **Context:** the deployment is for personal and portfolio use, not a registered business. You decided this on 2026-11-25.
+- **Chosen:** skip Meta business verification.
+  - Meta's messaging-limits page gives a new, unverified business portfolio a limit of 250 unique users per moving 24 hours. It counts only messages started outside a customer service window; replies to customers who wrote first are not counted.
+  - Meta's health check shows the business as `LIMITED` (141010, not verified) while the number, the WhatsApp account and the app are `AVAILABLE`.
+- **Setup:**
+  - Meta's test number, delivering to recipients added and verified in API Setup.
+  - A system user token (D-110), and a verified card on the WhatsApp account. Without the card, Meta blocked business-initiated messages (141006).
+  - Business info filled in (131000).
+- **Consequences:**
+  - **WhatsApp calling (P-13) is out of reach:** Meta's Calling API needs a messaging limit of at least 2,000, which needs verification or scaling.
+  - **A public demo needs another route:** strangers cannot message a test number, so the demo should be the simulator page beside the desk, behind a password (P-01 allows both on one deployment).
+  - **AWS Pay by invoice may also be harder for an individual,** which would make Titan the fallback for embeddings.
+
 ## Proposed, awaiting approval
 
 These came out of the first review of the brief. Approved on 2026-11-17 and built in phase 1: P-03 (no email; invites and reset links move to phase 6 with settings), P-08, P-11 (Radix arrives with the first menu or dialog) and P-12. P-01 and P-02 were approved and built in phase 2 (D-034, D-038). P-06 and P-07 were approved on 2026-11-20 and built in phase 4 (D-067, and D-065's notices for media). P-09 applies to the live Transcribe adapter (phase 7). P-05 was approved and built in phase 6 (D-087), and P-04 was moved to phase 7, both on 2026-11-20. P-04 was built in phase 7 (D-094). P-10 was approved and built in phase 8 (D-098), with Claude Sonnet as judge; its live run waits for credentials. Still open: P-09 and P-13.
