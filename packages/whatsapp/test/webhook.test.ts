@@ -58,6 +58,17 @@ describe("Meta's documented payloads parse", () => {
   });
 });
 
+describe('a payload Meta really sent (2026-11, identifiers replaced)', () => {
+  // A delivery failure from the live Cloud API. It carries fields the
+  // documented examples lack (recipient_logical_id, internal_1p_only_data);
+  // parsing must keep working and read the status, ID and error code.
+  it('a failed status with error 131031', () => {
+    const status = onlyValue('status-failed-live-2026-11').statuses?.[0];
+    expect(status).toMatchObject({ status: 'failed', recipient_id: '919800000105' });
+    expect(status?.errors?.[0]?.code).toBe(131031);
+  });
+});
+
 describe('parsing is strict where it matters', () => {
   it('rejects payloads for other webhook objects', () => {
     expect(() => messagesValues({ object: 'page', entry: [] })).toThrow();

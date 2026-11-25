@@ -1,0 +1,49 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550783881",
+              "phone_number_id": "106540352242922"
+            },
+            "contacts": [{ "wa_id": "919800000105", "user_id": "IN.40000000000000000005" }],
+            "statuses": [
+              {
+                "id": "wamid.HBgMOTE5ODAwMDAwMTA1FQIAERgSNzEzQ0Y4NDM1MDYyQjlDQkVBAA==",
+                "status": "failed",
+                "timestamp": "1795570819",
+                "recipient_id": "919800000105",
+                "recipient_logical_id": "87643119460486",
+                "recipient_user_id": "IN.40000000000000000005",
+                "errors": [
+                  {
+                    "code": 131031,
+                    "title": "Business Account locked",
+                    "message": "Business Account locked",
+                    "error_data": { "details": "Business account has been locked." },
+                    "href": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/"
+                  }
+                ],
+                "internal_1p_only_data": {
+                  "webhook_extra_data": "redacted",
+                  "account_context": {
+                    "cs_id": "106540352242922",
+                    "pma_id": "102290129340398",
+                    "app_id": "1234567890123456",
+                    "account_context_type": "paid_messaging"
+                  }
+                }
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}
